@@ -6,9 +6,6 @@ from dgl.utils import pin_memory_inplace
 from load_graph import load_custom_reddit
 from model import *
 from graphsage_sampler import *
-import KHopSamplingPy3 as NextDoorKHopSampler
-import ctypes
-from numpy.ctypeslib import ndpointer
 import time
 import argparse
 
@@ -45,7 +42,8 @@ def evaluate_nextdoor(model, graph, dataloader, features, labels):
 def layerwise_infer(graph, nid, model, batch_size, feat, label):
     model.eval()
     with torch.no_grad():
-        pred = model.inference(graph, device, batch_size, feat) # pred in buffer_device
+        pred = model.inference(graph, device, batch_size,
+                               feat)  # pred in buffer_device
         pred = pred[nid]
         label = label[nid].to(pred.device)
         return MF.accuracy(pred, label)
@@ -53,7 +51,8 @@ def layerwise_infer(graph, nid, model, batch_size, feat, label):
 
 def train_dgl(g, dataset, feat_device):
     features, labels, n_classes, train_idx, val_idx, test_idx = dataset
-    model = GraphSAGE_DGL(features.shape[1], 256, n_classes, feat_device).to(device)
+    model = GraphSAGE_DGL(
+        features.shape[1], 256, n_classes, feat_device).to(device)
     # create sampler & dataloader
     sampler = NeighborSampler([25, 10])
     train_dataloader = DataLoader(g, train_idx, sampler, device=device,
@@ -65,10 +64,11 @@ def train_dgl(g, dataset, feat_device):
                                 drop_last=False, num_workers=0)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
-    
+
     accumulated_time = 0
-    
-    for epoch in range(10):
+    n_epoch = 10
+
+    for epoch in range(n_epoch):
         torch.cuda.synchronize()
         start = time.time()
         model.train()
@@ -88,23 +88,21 @@ def train_dgl(g, dataset, feat_device):
         torch.cuda.synchronize()
         accumulated_time += time.time() - start
         print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
-    
-    print('Average epoch time:', accumulated_time / 10)
+
+    print('Average epoch time:', accumulated_time / n_epoch)
 
     print('Testing...')
-    acc = layerwise_infer(g, test_idx, model, batch_size=4096, feat=features, label=labels)
+    acc = layerwise_infer(g, test_idx, model,
+                          batch_size=4096, feat=features, label=labels)
     print("Test Accuracy {:.4f}".format(acc.item()))
 
 
 def train_nextdoor(g, dataset, feat_device, use_uva):
     features, labels, n_classes, train_idx, val_idx, test_idx = dataset
-    model = GraphSAGE_Nextdoor(features.shape[1], 256, n_classes, 2, feat_device, use_uva).to(device)
+    model = GraphSAGE_Nextdoor(
+        features.shape[1], 256, n_classes, 2, feat_device, use_uva).to(device)
     # create sampler & dataloader
-    NextDoorKHopSampler.initSampling(file_path)
-    lib = ctypes.CDLL("./KHopSamplingPy3.so")
-    print("NextDoorKHopSampler.finalSampleLength() ", NextDoorKHopSampler.finalSampleLength())
-    lib.finalSamplesArray.restype = ndpointer(dtype=ctypes.c_int, shape=(min(NextDoorKHopSampler.finalSampleLength(), 2**28)))
-    sampler = NextdoorKhopSampler([25, 10], sampler=NextDoorKHopSampler, lib=lib)
+    sampler = NextdoorKhopSampler([25, 10], file_path=file_path)
     train_dataloader = DataLoader(g, train_idx, sampler, device=device,
                                   batch_size=1024, shuffle=True,
                                   drop_last=False, num_workers=0)
@@ -114,19 +112,22 @@ def train_nextdoor(g, dataset, feat_device, use_uva):
                                 drop_last=False, num_workers=0)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
-    
+
     accumulated_time = 0
-    
-    for epoch in range(10):
+    n_epoch = 10
+
+    for epoch in range(n_epoch):
         torch.cuda.synchronize()
         start = time.time()
-        # sampler.sample_time = 0
+        sampler.sample_time = 0
         model.train()
         total_loss = 0
         for it, (samples, blocks) in enumerate(train_dataloader):
             y = labels[samples[0]]
             y_hat = model(blocks, features, samples)
+            # print(y.shape, y_hat.shape)
             loss = F.cross_entropy(y_hat, y)
+            # print(loss)
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -137,12 +138,13 @@ def train_nextdoor(g, dataset, feat_device, use_uva):
         torch.cuda.synchronize()
         # accumulated_time += sampler.sample_time
         accumulated_time += time.time() - start
-        print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
+        # print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
 
-    print('Average epoch time:', accumulated_time / 10)
-    
+    print('Average epoch time:', accumulated_time / n_epoch)
+
     print('Testing...')
-    acc = layerwise_infer(g, test_idx, model, batch_size=4096, feat=features, label=labels)
+    acc = layerwise_infer(g, test_idx, model,
+                          batch_size=4096, feat=features, label=labels)
     print("Test Accuracy {:.4f}".format(acc.item()))
 
 
@@ -151,6 +153,7 @@ if __name__ == '__main__':
     parser.add_argument("--fmode", default='cuda', choices=['cpu', 'cuda', 'uva'],
                         help="Feature reside device. To cpu or gpu")
     args = parser.parse_args()
+    print(args)
     feat_device = 'cuda'
     use_uva = False
     if args.fmode != 'cuda':
@@ -159,7 +162,8 @@ if __name__ == '__main__':
             use_uva = True
     # load and preprocess dataset
     print('Loading data')
-    g, features, labels, n_classes, splitted_idx = load_custom_reddit(file_path)
+    g, features, labels, n_classes, splitted_idx = load_custom_reddit(
+        file_path)
     g = g.to('cuda')
     train_mask, val_mask, test_mask = splitted_idx['train'], splitted_idx['val'], splitted_idx['test']
     train_idx = train_mask.to(device)
@@ -169,5 +173,7 @@ if __name__ == '__main__':
         feat_ndarray = pin_memory_inplace(features)
     labels = labels.to(device)
 
-    # train_dgl(g, (features, labels, n_classes, train_idx, val_idx, test_mask), feat_device)
-    train_nextdoor(g, (features, labels, n_classes, train_idx, val_idx, test_mask), feat_device, use_uva)
+    # train_dgl(g, (features, labels, n_classes, train_idx,
+    #           val_idx, test_mask), feat_device)
+    train_nextdoor(g, (features, labels, n_classes, train_idx,
+                   val_idx, test_mask), feat_device, use_uva)

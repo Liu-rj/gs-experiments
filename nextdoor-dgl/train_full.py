@@ -4,11 +4,11 @@ import numpy as np
 import torch
 import load_graph
 from graphsage_sampler import *
-import KHopSamplingPy3 as NextDoorKHopSampler
-import ctypes
-from numpy.ctypeslib import ndpointer
 from model import *
 from dgl.utils import pin_memory_inplace
+
+
+torch.ops.load_library("./nextdoor/build/libnextdoor.so")
 
 
 def evaluate_dgl(model, graph, features, labels, nid, seeds, fanout):
@@ -23,10 +23,10 @@ def evaluate_dgl(model, graph, features, labels, nid, seeds, fanout):
         return correct.item() * 1.0 / len(labels)
 
 
-def evaluate_nextdoor(model, features, labels, nid, NextDoorKHopSampler, lib, seeds, fanout):
+def evaluate_nextdoor(model, features, labels, nid, sampler, seeds, fanout):
     model.eval()
     with torch.no_grad():
-        blocks, samples = neighborsampler_nextdoor(NextDoorKHopSampler, lib, seeds, fanout)
+        blocks, samples = neighborsampler_nextdoor(sampler, seeds, fanout)
         logits = model(blocks, features, samples)
         labels = labels[seeds]
         _, indices = torch.max(logits, dim=1)
@@ -154,21 +154,22 @@ def train_nextdoor(args, file_name, feat_device, use_uva):
     dur = []
     seeds = g.nodes()
     fanout = [25, 10]
-    
-    NextDoorKHopSampler.initSampling(file_name)
-    lib = ctypes.CDLL("./KHopSamplingPy3.so")
-    print("NextDoorKHopSampler.finalSampleLength() ", NextDoorKHopSampler.finalSampleLength())
-    lib.finalSamplesArray.restype = ndpointer(dtype=ctypes.c_int, shape=(min(NextDoorKHopSampler.finalSampleLength(), 2**28)))
-    
+
+    sampler = torch.classes.my_classes.NextdoorKHopSampler(file_name)
+    sampler.initSampling()
+
     accumulate_time = 0
-    
+
     for epoch in range(args.n_epochs):
-        start = time.time()
         model.train()
         if epoch >= 3:
             t0 = time.time()
         # forward
-        samples, blocks = neighborsampler_nextdoor(NextDoorKHopSampler, lib, seeds, fanout)
+        torch.cuda.synchronize()
+        start = time.time()
+        samples, blocks = neighborsampler_nextdoor(sampler, seeds, fanout)
+        torch.cuda.synchronize()
+        end = time.time()
         logits = model(blocks, features, samples)
         loss = F.cross_entropy(logits, labels[seeds])
 
@@ -179,41 +180,22 @@ def train_nextdoor(args, file_name, feat_device, use_uva):
         if epoch >= 3:
             dur.append(time.time() - t0)
 
-        acc = evaluate_nextdoor(model, features, labels, val_nid, NextDoorKHopSampler, lib, seeds, fanout)
+        acc = evaluate_nextdoor(model, features, labels,
+                                val_nid, sampler, seeds, fanout)
         print("Epoch {:05d} | Time(s) {:.4f} | Loss {:.4f} | Accuracy {:.4f} | "
               "ETputs(KTEPS) {:.2f}".format(epoch, np.mean(dur), loss.item(),
                                             acc, n_edges / np.mean(dur) / 1000))
-        accumulate_time += time.time() - start
+        accumulate_time += end - start
 
     print('Average epoch time:', accumulate_time / args.n_epochs)
 
     print()
-    acc = evaluate_nextdoor(model, features, labels, test_nid, NextDoorKHopSampler, lib, seeds, fanout)
+    acc = evaluate_nextdoor(model, features, labels,
+                            test_nid, sampler, seeds, fanout)
     print("Test Accuracy {:.4f}".format(acc))
 
 
 if __name__ == '__main__':
-    # file_name = "/home/ubuntu/NextDoorEval/NextDoor/input/reddit.data"
-    # g, features, labels, n_classes, splitted_idx = load_graph.load_custom_reddit(file_name)
-    # g = g.to('cuda')
-    # seeds = g.nodes()
-    # fanouts = [25, 10]
-    
-    # NextDoorKHopSampler.initSampling(file_name)
-    # lib = ctypes.CDLL("./KHopSamplingPy3.so")
-    # print("NextDoorKHopSampler.finalSampleLength() ", NextDoorKHopSampler.finalSampleLength())
-    # lib.finalSamplesArray.restype = ndpointer(dtype=ctypes.c_int, shape=(min(NextDoorKHopSampler.finalSampleLength(), 2**28)))
-    
-    # acc = 0
-    # for i in range(10):
-    #     torch.cuda.synchronize()
-    #     start = time.time()
-    #     # samples, blocks = neighborsampler_nextdoor(NextDoorKHopSampler, lib, seeds, fanouts)
-    #     blocks = neighborsampler_dgl(g, seeds, fanouts)
-    #     torch.cuda.synchronize()
-    #     acc += time.time() - start
-    # print(acc / 10)
-    
     parser = argparse.ArgumentParser(description='GraphSAGE')
     parser.add_argument("--dropout", type=float, default=0.5,
                         help="dropout probability")
@@ -234,4 +216,4 @@ if __name__ == '__main__':
 
     data_path = "/home/ubuntu/NextDoorEval/NextDoor/input/reddit.data"
     # train_dgl(args, data_path)
-    train_nextdoor(args, data_path, 'cpu', True)
+    train_nextdoor(args, data_path, 'cuda', use_uva=False)
