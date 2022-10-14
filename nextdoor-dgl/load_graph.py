@@ -69,7 +69,7 @@ def load_custom_reddit(filename):
     test_nid = torch.nonzero(g.ndata["test_mask"][:num_nodes], as_tuple=True)[0]
     val_nid = torch.nonzero(g.ndata["val_mask"][:num_nodes], as_tuple=True)[0]
     splitted_idx = {"train": train_nid, "test": test_nid, "val": val_nid}
-    feat = g.ndata['feat']
-    labels = g.ndata['label']
+    feat = g.ndata['feat'][:num_nodes].clone()
+    labels = g.ndata['label'][:num_nodes]
     g.ndata.clear()
     return dgl_graph, feat, labels, n_classes, splitted_idx

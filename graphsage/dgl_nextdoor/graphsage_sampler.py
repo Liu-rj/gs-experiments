@@ -1,17 +1,19 @@
 import torch
 import dgl
 from dgl import to_block, create_block
-import numpy as np
 from dgl.dataloading import BlockSampler
 import time
 
 
-torch.ops.load_library("./nextdoor/build/libnextdoor.so")
+torch.ops.load_library("nextdoor/build/libnextdoor.so")
 
 
 def neighborsampler_dgl(g, seeds, fanout):
     seed_nodes = seeds
     blocks = []
+    acc_time = 0
+    torch.cuda.synchronize()
+    start = time.time()
     for num_pick in fanout:
         sg = dgl.sampling.sample_neighbors(
             g, seed_nodes, num_pick, replace=True)
@@ -19,6 +21,9 @@ def neighborsampler_dgl(g, seeds, fanout):
         block.edata['_ID'] = sg.edata['_ID']
         seed_nodes = block.srcdata['_ID']
         blocks.insert(0, block)
+    torch.cuda.synchronize()
+    acc_time += time.time() - start
+    print(acc_time)
     return blocks
 
 
@@ -83,3 +88,45 @@ class NextdoorKhopSampler(BlockSampler):
 
     def sample(self, g, seed_nodes, exclude_eids=None):
         return self.sample_blocks(g, seed_nodes, exclude_eids=exclude_eids)
+
+
+class DGLNeighborSampler(BlockSampler):
+    def __init__(self, fanouts, edge_dir='in', prob=None, replace=False,
+                 prefetch_node_feats=None, prefetch_labels=None, prefetch_edge_feats=None,
+                 output_device=None):
+        super().__init__(prefetch_node_feats=prefetch_node_feats,
+                         prefetch_labels=prefetch_labels,
+                         prefetch_edge_feats=prefetch_edge_feats,
+                         output_device=output_device)
+        self.fanouts = fanouts
+        self.edge_dir = edge_dir
+        self.prob = prob
+        self.replace = replace
+        # self.sample_time = 0
+
+    def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+        # torch.cuda.nvtx.range_push('graphsage sampler func')
+        output_nodes = seed_nodes
+        blocks = []
+        for fanout in reversed(self.fanouts):
+            # torch.cuda.nvtx.range_push('dgl neighbor sampling')
+            # torch.cuda.synchronize()
+            # start = time.time()
+            frontier = g.sample_neighbors(
+                seed_nodes, fanout, edge_dir=self.edge_dir, prob=self.prob,
+                replace=self.replace, output_device=self.output_device,
+                exclude_edges=exclude_eids)
+            # torch.cuda.synchronize()
+            # self.sample_time += time.time() - start
+            # torch.cuda.nvtx.range_pop()
+            eid = frontier.edata[dgl.EID]
+            # torch.cuda.nvtx.range_push('to dgl block')
+            block = to_block(frontier, seed_nodes)
+            # torch.cuda.nvtx.range_pop()
+            block.edata[dgl.EID] = eid
+            # torch.cuda.nvtx.range_push('all indices')
+            seed_nodes = block.srcdata[dgl.NID]
+            # torch.cuda.nvtx.range_pop()
+            blocks.insert(0, block)
+        # torch.cuda.nvtx.range_pop()
+        return seed_nodes, output_nodes, blocks

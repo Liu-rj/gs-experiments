@@ -3,15 +3,52 @@ import torch.nn.functional as F
 import torchmetrics.functional as MF
 from dgl.dataloading import DataLoader, NeighborSampler
 from dgl.utils import pin_memory_inplace
-from load_graph import load_custom_reddit
+from dgl.data import RedditDataset
 from model import *
 from graphsage_sampler import *
 import time
 import argparse
+import os
+from ctypes import *
+from ctypes.util import *
+import numpy as np
 
-
+libgraphPath = '../libgraph.so'
+libgraph = CDLL(libgraphPath)
+libgraph.loadgraph.argtypes = [c_char_p]
 device = torch.device('cuda')
 file_path = "/home/ubuntu/NextDoorEval/NextDoor/input/reddit.data"
+
+def load_custom_reddit(filename):
+    if not os.path.exists(filename):
+        raise Exception("'%s' do not exist" % (filename))
+
+    graphPath = bytes(filename, encoding='utf8')
+    libgraph.loadgraph(graphPath)
+    libgraph.getEdgePairList.restype = np.ctypeslib.ndpointer(
+        dtype=c_int, shape=(libgraph.numberOfEdges(), 2))
+
+    print("Graph Loaded in C++")
+
+    edges = libgraph.getEdgePairList()
+    print("Number of Edges", libgraph.numberOfEdges())
+    print("Number of Vertices", libgraph.numberOfVertices())
+    src_ids = torch.tensor(edges[:, 0])
+    dst_ids = torch.tensor(edges[:, 1])
+    dgl_graph = dgl.graph((src_ids, dst_ids), idtype=torch.int64)
+    num_nodes = dgl_graph.num_nodes()
+    
+    data = RedditDataset(self_loop=True)
+    g = data[0]
+    n_classes = data.num_classes
+    train_nid = torch.nonzero(g.ndata["train_mask"][:num_nodes], as_tuple=True)[0]
+    test_nid = torch.nonzero(g.ndata["test_mask"][:num_nodes], as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"][:num_nodes], as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "val": val_nid}
+    feat = g.ndata['feat'][:num_nodes].clone()
+    labels = g.ndata['label'][:num_nodes]
+    g.ndata.clear()
+    return dgl_graph, feat, labels, n_classes, splitted_idx
 
 
 def evaluate_dgl(model, graph, dataloader, features, labels):
@@ -54,7 +91,7 @@ def train_dgl(g, dataset, feat_device):
     model = GraphSAGE_DGL(
         features.shape[1], 256, n_classes, feat_device).to(device)
     # create sampler & dataloader
-    sampler = NeighborSampler([25, 10])
+    sampler = DGLNeighborSampler([25, 10], replace=True)
     train_dataloader = DataLoader(g, train_idx, sampler, device=device,
                                   batch_size=1024, shuffle=True,
                                   drop_last=False, num_workers=0)
@@ -87,6 +124,8 @@ def train_dgl(g, dataset, feat_device):
               .format(epoch, total_loss / (it+1), acc.item()))
         torch.cuda.synchronize()
         time_list.append(time.time() - start)
+        # time_list.append(sampler.sample_time)
+        # sampler.sample_time = 0
         print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
 
     print('Average epoch time:', np.mean(time_list[3:]))
@@ -134,6 +173,7 @@ def train_nextdoor(g, dataset, feat_device, use_uva):
               .format(epoch, total_loss / (it+1), acc.item()))
         torch.cuda.synchronize()
         # accumulated_time += sampler.sample_time
+        # sampler.sample_time = 0
         accumulated_time += time.time() - start
         # print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
 
