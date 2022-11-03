@@ -15,10 +15,10 @@ import numpy as np
 
 
 def load_reddit():
-    coo_adj = sp.load_npz('FastGCN/reddit/reddit_adj.npz')
+    coo_adj = sp.load_npz('../author/data/reddit/reddit_adj.npz')
     graph = from_scipy(coo_adj)
     # features and labels
-    reddit_data = np.load('FastGCN/reddit/reddit.npz')
+    reddit_data = np.load('../author/data/reddit/reddit.npz')
     features = reddit_data["feats"]
     y_train, y_val, y_test = reddit_data['y_train'], reddit_data['y_val'], reddit_data['y_test']
     # tarin/val/test indices

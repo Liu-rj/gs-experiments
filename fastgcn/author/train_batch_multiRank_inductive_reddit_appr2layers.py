@@ -116,7 +116,7 @@ def main(rank1, rank0, with_prob):
     #                 intra_op_parallelism_threads = 4,
     #                 log_device_placement=False)
     adj, features, y_train, y_val, y_test, train_index, val_index, test_index = loadRedditFromNPZ(
-        "reddit/")
+        "data/reddit/")
     print("adjcent matrix shape:", adj.shape)
     print("num of edges:", len(adj.row))
     print("train samples:", len(train_index))
@@ -283,7 +283,7 @@ def main(rank1, rank0, with_prob):
               "train_acc=", "{:.5f}".format(
                   outs[2]), "val_loss=", "{:.5f}".format(cost),
               "val_acc=", "{:.5f}".format(
-                  acc), "time per batch=", "{:.5f}".format((time.time() - t1)/n),
+                  acc), "time per epoch=", "{:.5f}".format(time.time() - t1),
               "epoch sampling time=", epoch_sampling_time)
 
         if epoch > FLAGS.early_stopping and np.mean(cost_val[-2:]) > np.mean(cost_val[-(FLAGS.early_stopping + 1):-1]):
@@ -324,6 +324,6 @@ def transferG2ADJ():
 if __name__ == "__main__":
     # transferRedditDataFormat("reddit/","data/reddit.npz")
 
-    main(200, 200, False)
+    main(200, 200, True)
     # for k in [50, 100, 200, 400]:
     #     main(100, k)

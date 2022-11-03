@@ -29,6 +29,7 @@ class KGCN(torch.nn.Module):
             torch.cuda.synchronize()
             time_list.append(time.time() - start)
         print('full graph average sampling time:', np.mean(time_list[3:]))
+        self.epoch_sample_time = np.mean(time_list[3:])
 
         self.usr = torch.nn.Embedding(num_user, args.dim)
         self.ent = torch.nn.Embedding(num_ent, args.dim)
@@ -39,18 +40,18 @@ class KGCN(torch.nn.Module):
         Generate adjacency matrix for entities and relations
         Only cares about fixed number of samples
         '''
-        torch.cuda.nvtx.range_push('full graph sampling')
-        torch.cuda.nvtx.range_push('column sampling')
+        # torch.cuda.nvtx.range_push('full graph sampling')
+        # torch.cuda.nvtx.range_push('column sampling')
         sampled_adj_matrix = self.kg.columnwise_sampling(self.n_neighbor, True)
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push('coo rows')
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('coo rows')
         self.adj_ent = sampled_adj_matrix.row_indices().view(
             (self.num_ent, self.n_neighbor))
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push('get data')
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('get data')
         self.adj_rel = sampled_adj_matrix.get_data().view((self.num_ent, self.n_neighbor))
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_pop()
 
     def forward(self, u, v):
         '''
@@ -81,6 +82,9 @@ class KGCN(torch.nn.Module):
         v is batch sized indices for items
         v: [batch_size, 1]
         '''
+        torch.cuda.synchronize()
+        start = time.time()
+        
         entities = [v]
         relations = []
 
@@ -91,6 +95,9 @@ class KGCN(torch.nn.Module):
                 (self.batch_size, -1))
             entities.append(neighbor_entities)
             relations.append(neighbor_relations)
+        
+        torch.cuda.synchronize()
+        self.epoch_sample_time += time.time() - start
 
         return entities, relations
 

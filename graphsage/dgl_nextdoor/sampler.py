@@ -102,31 +102,28 @@ class DGLNeighborSampler(BlockSampler):
         self.edge_dir = edge_dir
         self.prob = prob
         self.replace = replace
-        # self.sample_time = 0
+        self.sample_time = 0
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+        torch.cuda.synchronize()
+        start = time.time()
         # torch.cuda.nvtx.range_push('graphsage sampler func')
         output_nodes = seed_nodes
         blocks = []
         for fanout in reversed(self.fanouts):
             # torch.cuda.nvtx.range_push('dgl neighbor sampling')
-            # torch.cuda.synchronize()
-            # start = time.time()
             frontier = g.sample_neighbors(
                 seed_nodes, fanout, edge_dir=self.edge_dir, prob=self.prob,
                 replace=self.replace, output_device=self.output_device,
                 exclude_edges=exclude_eids)
-            # torch.cuda.synchronize()
-            # self.sample_time += time.time() - start
-            # torch.cuda.nvtx.range_pop()
-            eid = frontier.edata[dgl.EID]
-            # torch.cuda.nvtx.range_push('to dgl block')
-            block = to_block(frontier, seed_nodes)
-            # torch.cuda.nvtx.range_pop()
-            block.edata[dgl.EID] = eid
+            blocks.insert(0, (frontier, seed_nodes))
             # torch.cuda.nvtx.range_push('all indices')
-            seed_nodes = block.srcdata[dgl.NID]
+            edges = frontier.edges()
+            seed_nodes = torch.unique(torch.cat(edges))
             # torch.cuda.nvtx.range_pop()
-            blocks.insert(0, block)
         # torch.cuda.nvtx.range_pop()
+        torch.cuda.synchronize()
+        self.sample_time += time.time() - start
+        blocks = [to_block(frontier, seed_nodes)
+                  for frontier, seed_nodes in blocks]
         return seed_nodes, output_nodes, blocks

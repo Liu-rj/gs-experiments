@@ -32,6 +32,7 @@ class KGCN(torch.nn.Module):
             torch.cuda.synchronize()
             time_list.append(time.time() - start)
         print('full graph average sampling time:', np.mean(time_list[3:]))
+        self.epoch_sample_time = np.mean(time_list[3:])
 
         self.usr = torch.nn.Embedding(num_user, args.dim)
         self.ent = torch.nn.Embedding(num_ent, args.dim)
@@ -55,6 +56,9 @@ class KGCN(torch.nn.Module):
 
             self.adj_ent[e] = torch.LongTensor([ent for _, ent in neighbors])
             self.adj_rel[e] = torch.LongTensor([rel for rel, _ in neighbors])
+        
+        self.adj_ent = self.adj_ent.cuda()
+        self.adj_rel = self.adj_rel.cuda()
 
     def forward(self, u, v):
         '''
@@ -85,16 +89,22 @@ class KGCN(torch.nn.Module):
         v is batch sized indices for items
         v: [batch_size, 1]
         '''
+        torch.cuda.synchronize()
+        start  = time.time()
+        
         entities = [v]
         relations = []
 
         for h in range(self.n_iter):
-            neighbor_entities = torch.LongTensor(self.adj_ent[entities[h]]).view(
-                (self.batch_size, -1)).to(self.device)
-            neighbor_relations = torch.LongTensor(self.adj_rel[entities[h]]).view(
-                (self.batch_size, -1)).to(self.device)
+            neighbor_entities = self.adj_ent[entities[h]].view(
+                (self.batch_size, -1))
+            neighbor_relations = self.adj_rel[entities[h]].view(
+                (self.batch_size, -1))
             entities.append(neighbor_entities)
             relations.append(neighbor_relations)
+        
+        torch.cuda.synchronize()
+        self.epoch_sample_time += time.time() - start
 
         return entities, relations
 

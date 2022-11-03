@@ -5,7 +5,7 @@ import dgl
 from dgl.data import RedditDataset
 import tqdm
 from model import *
-from ladies2 import *
+from sampler import *
 
 
 def compute_acc(pred, label):
@@ -23,11 +23,7 @@ def train(g, n_classes, args):
         'gcn': GraphConv,
         'sage': SAGEConv,
     }[args['conv']]
-    norm = {
-        'gcn': normalized_laplacian_edata,
-        'sage': normalized_edata,
-    }[args['conv']]
-    g.edata['weight'] = norm(g)
+    # g.ndata['degree'] = degree_ndata(g)
 
     num_nodes = [int(n) for n in args['num_nodes'].split(',')]
     sampler = LADIESNeighborSampler(
@@ -50,14 +46,19 @@ def train(g, n_classes, args):
         drop_last=False,
         num_workers=args['num_workers'], device=device)
 
-    model = Model(in_feats, args['hidden_dim'], n_classes, len(num_nodes),
-                  dropout=args['dropout'], conv=conv)
-    model = model.to(device)
+    # model = Model(in_feats, args['hidden_dim'], n_classes, len(num_nodes),
+    #               dropout=args['dropout'], conv=conv).to(device)
+    model = SAGEModel(in_feats, args['hidden_dim'], n_classes, feat_device='cuda').to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args['lr'])
     best_acc = 0
     time_list = []
+    epoch_time = []
 
+    torch.cuda.synchronize()
     for epoch in range(args['num_epochs']):
+        torch.cuda.synchronize()
+        start = time.time()
+
         model.train()
         with tqdm.tqdm(train_dataloader) as tq:
             for step, (input_nodes, seeds, blocks) in enumerate(tq):
@@ -92,16 +93,20 @@ def train(g, n_classes, args):
             acc = compute_acc(torch.cat(val_pred, 0),
                               torch.cat(val_labels, 0)).item()
 
+        torch.cuda.synchronize()
+        epoch_time.append(time.time() - start)
         time_list.append(sampler.epoch_sampling_time)
-        print('sampling time:', sampler.epoch_sampling_time)
         sampler.epoch_sampling_time = 0
-        print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
+
+        print("Epoch {:05d} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch, epoch_time[-1], time_list[-1], torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024)))
 
         # print('Best: %.4f Val: %.4f' % (best_acc, acc))
         # if best_acc < acc:
         #     best_acc = acc
         #     torch.save(model.state_dict(), 'model.pt')
 
+    print('Average epoch end2end time:', np.mean(epoch_time[3:]))
     print('Average epoch sampling time:', np.mean(time_list[3:]))
 
     # model.load_state_dict(torch.load('model.pt'))
@@ -154,6 +159,7 @@ def load_reddit():
     g.ndata['features'] = g.ndata['feat'].cuda()
     g.ndata['labels'] = g.ndata['label'].cuda()
     n_classes = data.num_classes
+    print(g)
     return g, n_classes
 
 
@@ -171,6 +177,6 @@ if __name__ == '__main__':
         'lr': 0.001,
         'num_nodes': '2000,2000',
         'device': 'cuda:0',
-        'conv': 'gcn',
+        'conv': 'sage',
         'dropout': 0.}
     train(g, num_labels, args)

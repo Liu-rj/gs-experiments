@@ -74,14 +74,12 @@ def ladies_sampler(P: gs.Matrix, seeds: torch.Tensor, fanouts: list):
         subU = subU.divide(prob[nodes], axis=1)
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push('row normalize')
-        subU = subU.normalize(axis=1)
+        subU = subU.normalize(axis=0)
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push('all indices')
         seeds = subU.all_indices()
         torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push('to dgl block')
-        ret.insert(0, subU.to_dgl_block())
-        torch.cuda.nvtx.range_pop()
+        ret.insert(0, subU)
     input_node = seeds
     torch.cuda.nvtx.range_pop()
 
@@ -96,8 +94,9 @@ def evaluate(model, matrix, compiled_func, seedloader, features, labels,
     ys = []
     y_hats = []
     for it, seeds in enumerate(seedloader):
-        input_nodes, output_nodes, blocks = compiled_func(
+        input_nodes, output_nodes, subMs = compiled_func(
             matrix, seeds, fanouts)
+        blocks = [block.to_dgl_block() for block in subMs]
         with torch.no_grad():
             x = features[input_nodes]
             y = labels[output_nodes]
@@ -142,17 +141,19 @@ def train(g, dataset, feat_device):
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
-    n_epoch = 10
+    n_epoch = 3
+    epoch_time = []
 
     for epoch in range(n_epoch):
-        # torch.cuda.synchronize()
-        # start = time.time()
+        torch.cuda.synchronize()
+        start = time.time()
 
         model.train()
         total_loss = 0
         for it, seeds in enumerate(train_seedloader):
-            input_nodes, output_nodes, blocks = compiled_func(
+            input_nodes, output_nodes, subMs = compiled_func(
                 m, seeds, fanouts)
+            blocks = [block.to_dgl_block() for block in subMs]
             x = features[input_nodes]
             y = labels[output_nodes]
             y_hat = model(blocks, x)
@@ -162,21 +163,20 @@ def train(g, dataset, feat_device):
             opt.step()
             total_loss += loss.item()
 
-        # torch.cuda.synchronize()
-        # time_list.append(time.time() - start)
-
         acc = evaluate(model, m, compiled_func, val_seedloader, features,
                        labels, fanouts)
 
+        torch.cuda.synchronize()
+        epoch_time.append(time.time() - start)
         global batch_time
-        print('sampling time:', batch_time)
         time_list.append(batch_time)
         batch_time = 0
 
-        print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} ".format(
-            epoch, total_loss / (it + 1), acc.item()))
-        print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
+        print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch, total_loss / (it+1), acc.item(), epoch_time[-1], time_list[-1], torch.cuda.max_memory_reserved() /
+                      (1024 * 1024 * 1024)))
 
+    print('Average epoch end2end time:', np.mean(epoch_time[3:]))
     print('Average epoch sampling time:', np.mean(time_list[3:]))
 
     print('Testing...')

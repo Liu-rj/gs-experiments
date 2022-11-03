@@ -3,7 +3,7 @@ import time
 import numpy as np
 import torch
 import load_graph
-from graphsage_sampler import *
+from sampler import *
 from model import *
 from dgl.utils import pin_memory_inplace
 

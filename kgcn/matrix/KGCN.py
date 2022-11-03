@@ -8,6 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 from gs.utils import SeedGenerator
 from tqdm import tqdm
+import time
 
 
 # Dataset class
@@ -64,8 +65,13 @@ def train(args):
     loss_list = []
     test_loss_list = []
     auc_score_list = []
+    time_list = []
+    epoch_sample = []
 
     for epoch in range(args.n_epochs):
+        torch.cuda.synchronize()
+        start = time.time()
+
         running_loss = 0.0
         for i, seeds in enumerate(tqdm(train_seedloader)):
             user_ids, item_ids, batch_labels = userID[seeds], itemID[seeds], labels[seeds]
@@ -94,10 +100,17 @@ def train(args):
         test_loss_list.append(test_loss / len(test_seedloader))
         auc_score_list.append(total_roc / len(test_seedloader))
 
-        print('[Epoch {}]train_loss: '.format(epoch+1),
-              running_loss / len(train_seedloader), 'test_loss: ', test_loss / len(test_seedloader), 'auc: ', total_roc / len(test_seedloader))
-        print('Torch Cuda Mem Peak:', torch.cuda.max_memory_reserved() /
-              (1024 * 1024 * 1024), 'GB')
+        torch.cuda.synchronize()
+        time_list.append(time.time() - start)
+        epoch_sample.append(net.epoch_sample_time)
+        net.epoch_sample_time = 0
+
+        print("Epoch {:05d} | Loss {:.4f} | AUC {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch + 1, test_loss / len(test_seedloader), total_roc / len(test_seedloader), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_reserved() /
+                      (1024 * 1024 * 1024)))
+
+    print('Average epoch end2end time:', np.mean(time_list[3:]))
+    print('Average epoch sampling time:', np.mean(epoch_sample[3:]))
 
 
 if __name__ == '__main__':
@@ -126,7 +139,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     if args.dataset == 'movie':
-        args.n_epochs = 1
+        args.n_epochs = 10
         args.neighbor_sample_size = 4
         args.dim = 32
         args.n_iter = 2

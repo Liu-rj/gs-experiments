@@ -1,18 +1,20 @@
+from cProfile import label
 import gs
 from gs.jit.passes import dce
 from gs.utils import SeedGenerator
+from gs.utils import load_graph
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics.functional as MF
+import dgl
 import dgl.nn as dglnn
 from dgl.dataloading import DataLoader, MultiLayerFullNeighborSampler
 import numpy as np
 import time
 import tqdm
-import argparse
-from load_graph import load_reddit
-from dgl import DGLHeteroGraph, create_block
+import numpy as np
+from ogb.nodeproppred import DglNodePropPredDataset
 
 
 device = torch.device('cuda')
@@ -20,74 +22,58 @@ time_list = []
 batch_time = 0
 
 
-def fastgcn_sampler(A: gs.Matrix, seeds: torch.Tensor, probs: torch.Tensor, fanouts: list):
+def load_ogbn_papers100M():
+    data = DglNodePropPredDataset(
+        name="ogbn-papers100M", root="../../datasets")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    print(g)
+    feat = g.ndata['feat']
+    labels = labels[:, 0].long()
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
+
+
+def graphsage_sampler(A: gs.Matrix, seeds: torch.Tensor, fanouts: list):
     global batch_time
-    
-    # torch.cuda.nvtx.range_push('fastgcn sampler func')
+
+    torch.cuda.nvtx.range_push('graphsage')
     output_nodes = seeds
     ret = []
     for fanout in fanouts:
         # torch.cuda.synchronize()
         # start = time.time()
-        
-        # torch.cuda.nvtx.range_push('columnwise slicing')
-        subA = A[:, seeds]
+        torch.cuda.nvtx.range_push('slicing_sampling')
+        # subA = A[:, seeds]
         # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('row indices')
-        row_indices = subA.row_ids()
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('list sampling uniform')
-        
-        # selected, _ = torch.ops.gs_ops.list_sampling(row_indices,
-        #                                              fanout, False)
-        
-        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
-            row_indices, probs[row_indices], fanout, False)
-        
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('rowwise slicing')
-        subA = subA[selected, :]
-        seeds = subA.all_indices()
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('relabel')
-        
+        # torch.cuda.nvtx.range_push('sampling')
+        # subA = subA.columnwise_sampling(fanout, True)
+        subA = gs.Matrix(
+            A._graph._CAPI_fused_columnwise_slicing_sampling(seeds, fanout, True))
+        torch.cuda.nvtx.range_pop()
         # torch.cuda.synchronize()
         # batch_time += time.time() - start
-        
+        torch.cuda.nvtx.range_push('allindices')
+        seeds = subA.all_indices()
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push('toblock')
         ret.insert(0, subA.to_dgl_block())
+        torch.cuda.nvtx.range_pop()
     input_nodes = seeds
-    # torch.cuda.nvtx.range_pop()
+    torch.cuda.nvtx.range_pop()
 
     return input_nodes, output_nodes, ret
-
-
-def slicing_and_sampling_fuse(gm):
-    """
-    Fuses columnwise_slicing and columnwise_sampling
-    """
-    for node in gm.graph.nodes:
-        if node.target == 'columnwise_sampling' and node.args[
-                0].target == 'columnwise_slicing':
-            if len(node.args[0].users) > 1:
-                continue
-            with gm.graph.inserting_after(node):
-                new_node = gm.graph.call_method(
-                    'fused_columnwise_slicing_sampling',
-                    args=(
-                        *node.args[0].args,
-                        *node.args[1:],
-                    ))
-                node.replace_all_uses_with(new_node)
-    gm.graph.lint()
-    gm.recompile()
-    return gm
 
 
 class SAGE(nn.Module):
     def __init__(self, in_size, hid_size, out_size, feat_device):
         super().__init__()
         self.layers = nn.ModuleList()
-        # two-layer GraphSAGE-mean
+        # three-layer GraphSAGE-mean
         self.layers.append(dglnn.SAGEConv(in_size, hid_size, 'mean'))
         self.layers.append(dglnn.SAGEConv(hid_size, out_size, 'mean'))
         self.dropout = nn.Dropout(0.5)
@@ -131,16 +117,16 @@ class SAGE(nn.Module):
         return y
 
 
-def evaluate(model, matrix, compiled_func, seedloader, features, labels, probs):
+def evaluate(model, matrix, compiled_func, seedloader, features, labels):
     model.eval()
     ys = []
     y_hats = []
     for it, seeds in enumerate(seedloader):
         input_nodes, output_nodes, blocks = compiled_func(
-            matrix, seeds, probs, [200, 200])
+            matrix, seeds, [25, 10])
         with torch.no_grad():
-            x = features[input_nodes]
-            y = labels[output_nodes]
+            x = features[input_nodes].to(device)
+            y = labels[output_nodes].to(device)
             ys.append(y)
             y_hats.append(model(blocks, x))
     return MF.accuracy(torch.cat(y_hats), torch.cat(ys))
@@ -151,9 +137,10 @@ def layerwise_infer(graph, nid, model, batch_size, feat, label):
     with torch.no_grad():
         pred = model.inference(graph, device, batch_size,
                                feat)  # pred in buffer_device
-        pred = pred[nid]
         label = label[nid].to(pred.device)
-        return MF.accuracy(pred, label)
+        pred = pred[nid]
+        is_labeled = label == label
+        return MF.accuracy(pred[is_labeled], label[is_labeled])
 
 
 def train(g, dataset, feat_device):
@@ -161,13 +148,15 @@ def train(g, dataset, feat_device):
     model = SAGE(features.shape[1], 256, n_classes, feat_device).to(device)
     # create sampler & dataloader
     m = gs.Matrix(gs.Graph(False))
-    m.load_dgl_graph(g)
+    csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
+    pinned_csc_indptr = csc_indptr.pin_memory()
+    pinned_csc_indices = csc_indices.pin_memory()
+    m._graph._CAPI_load_csc(pinned_csc_indptr, pinned_csc_indices)
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
-    fanouts = [200, 200]
+    compiled_func = graphsage_sampler
     # compiled_func = gs.jit.compile(
-    #     func=fastgcn_sampler, args=(m, torch.Tensor(), fanouts))
+    #     func=graphsage_sampler, args=(m, torch.Tensor(), [25, 10]))
     # compiled_func.gm = dce(slicing_and_sampling_fuse(compiled_func.gm))
-    compiled_func = fastgcn_sampler
     train_seedloader = SeedGenerator(
         train_idx, batch_size=1024, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(
@@ -175,67 +164,55 @@ def train(g, dataset, feat_device):
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
-    n_epoch = 10
-
-    probs = g.out_degrees().float().cuda()
+    n_epoch = 3
 
     for epoch in range(n_epoch):
-        torch.cuda.synchronize()
-        start = time.time()
+        # torch.cuda.synchronize()
+        # start = time.time()
 
         model.train()
         total_loss = 0
         for it, seeds in enumerate(train_seedloader):
-            input_nodes, output_nodes, blocks = compiled_func(
-                m, seeds, probs, fanouts)
-            x = features[input_nodes]
-            y = labels[output_nodes]
+            seeds = seeds.to(device)
+            input_nodes, output_nodes, blocks = compiled_func(m, seeds, [
+                                                              25, 10])
+            x = features[input_nodes].to(device)
+            y = labels[output_nodes].to(device)
             y_hat = model(blocks, x)
-            loss = F.cross_entropy(y_hat, y)
+            is_labeled = y == y
+            loss = F.cross_entropy(y_hat[is_labeled], y[is_labeled])
             opt.zero_grad()
             loss.backward()
             opt.step()
             total_loss += loss.item()
-
         acc = evaluate(model, m, compiled_func,
-                       val_seedloader, features, labels, probs)
+                       val_seedloader, features, labels)
 
-        torch.cuda.synchronize()
-        time_list.append(time.time() - start)
-        # global batch_time
-        # time_list.append(batch_time)
-        # batch_time = 0
+        # torch.cuda.synchronize()
+        # end = time.time()
+        # time_list.append(end - start)
+        global batch_time
+        time_list.append(batch_time)
+        batch_time = 0
 
         print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} | E2E Time {:.4f} s | GPU Mem Peak {:.4f} GB"
               .format(epoch, total_loss / (it+1), acc.item(), time_list[-1], torch.cuda.max_memory_reserved() /
                       (1024 * 1024 * 1024)))
 
-    print('Average epoch sampling time:', np.mean(time_list[3:]))
+    print('Average epoch time:', np.mean(time_list[3:]), 'seconds')
 
-    print('Testing...')
-    acc = layerwise_infer(g, test_idx, model,
-                          batch_size=4096, feat=features, label=labels)
-    print("Test Accuracy {:.4f}".format(acc.item()))
+    # print('Testing...')
+    # acc = layerwise_infer(g, test_idx, model,
+    #                       batch_size=1024, feat=features, label=labels)
+    # print("Test Accuracy {:.4f}".format(acc.item()))
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--fmode", default='cuda', choices=['cpu', 'cuda'],
-                        help="Feature reside device. To cpu or gpu")
-    args = parser.parse_args()
-    print(args)
-    feat_device = args.fmode
+    feat_device = 'cpu'
     # load and preprocess dataset
     print('Loading data')
-    g, features, labels, n_classes, splitted_idx = load_reddit()
-    print('num of nodes:', g.num_nodes())
-    print('num of edges:', g.num_edges())
-    g = g.long().to('cuda')
-    train_mask, val_mask, test_mask = splitted_idx['train'], splitted_idx['val'], splitted_idx['test']
-    train_idx = train_mask.to(device)
-    val_idx = val_mask.to(device)
-    features = features.to(feat_device)
-    labels = labels.to(device)
+    g, features, labels, n_classes, splitted_idx = load_ogbn_papers100M()
+    train_mask, val_mask, test_mask = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
 
-    train(g, (features, labels, n_classes, train_idx,
-              val_idx, test_mask), feat_device)
+    train(g, (features, labels, n_classes, train_mask,
+              val_mask, test_mask), feat_device)

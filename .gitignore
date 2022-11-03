@@ -3,4 +3,5 @@ __pycache__
 build
 *.nsys-rep
 data
+datasets
 *.pyc

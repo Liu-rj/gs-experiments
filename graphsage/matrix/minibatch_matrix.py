@@ -1,6 +1,6 @@
 import gs
 from gs.jit.passes import dce
-from gs.utils import SeedGenerator
+from gs.utils import SeedGenerator, load_graph
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,16 +19,16 @@ from ctypes import *
 from ctypes.util import *
 import numpy as np
 
-libgraphPath = '../libgraph.so'
-libgraph = CDLL(libgraphPath)
-libgraph.loadgraph.argtypes = [c_char_p]
+
 device = torch.device('cuda')
-file_path = "/home/ubuntu/NextDoorEval/NextDoor/input/reddit.data"
-time_list = []
 batch_time = 0
 
 
-def load_custom_reddit(filename):
+def load_custom_reddit():
+    libgraphPath = '../libgraph.so'
+    libgraph = CDLL(libgraphPath)
+    libgraph.loadgraph.argtypes = [c_char_p]
+    filename = "/home/ubuntu/NextDoorEval/NextDoor/input/reddit.data"
     if not os.path.exists(filename):
         raise Exception("'%s' do not exist" % (filename))
 
@@ -46,12 +46,14 @@ def load_custom_reddit(filename):
     dst_ids = torch.tensor(edges[:, 1])
     dgl_graph = dgl.graph((src_ids, dst_ids), idtype=torch.int64)
     num_nodes = dgl_graph.num_nodes()
-    
+
     data = RedditDataset(self_loop=True)
     g = data[0]
     n_classes = data.num_classes
-    train_nid = torch.nonzero(g.ndata["train_mask"][:num_nodes], as_tuple=True)[0]
-    test_nid = torch.nonzero(g.ndata["test_mask"][:num_nodes], as_tuple=True)[0]
+    train_nid = torch.nonzero(
+        g.ndata["train_mask"][:num_nodes], as_tuple=True)[0]
+    test_nid = torch.nonzero(
+        g.ndata["test_mask"][:num_nodes], as_tuple=True)[0]
     val_nid = torch.nonzero(g.ndata["val_mask"][:num_nodes], as_tuple=True)[0]
     splitted_idx = {"train": train_nid, "test": test_nid, "val": val_nid}
     feat = g.ndata['feat'][:num_nodes].clone()
@@ -62,14 +64,30 @@ def load_custom_reddit(filename):
 
 def graphsage_sampler(A: gs.Matrix, seeds: torch.Tensor, fanouts: list):
     global batch_time
+    torch.cuda.synchronize()
+    start = time.time()
+    # torch.cuda.nvtx.range_push('graphsage')
     output_nodes = seeds
     ret = []
     for fanout in fanouts:
-        subA = A[:, seeds]
-        subA = subA.columnwise_sampling(fanout, True)
+        # torch.cuda.nvtx.range_push('slicing_sampling')
+        # subA = A[:, seeds]
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('sampling')
+        # subA = subA.columnwise_sampling(fanout, True)
+        subA = gs.Matrix(
+            A._graph._CAPI_fused_columnwise_slicing_sampling(seeds, fanout, True))
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('allindices')
         seeds = subA.all_indices()
-        ret.insert(0, subA.to_dgl_block())
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('toblock')
+        ret.insert(0, subA)
+        # torch.cuda.nvtx.range_pop()
     input_nodes = seeds
+    # torch.cuda.nvtx.range_pop()
+    torch.cuda.synchronize()
+    batch_time += time.time() - start
     return input_nodes, output_nodes, ret
 
 
@@ -147,10 +165,11 @@ def evaluate(model, matrix, compiled_func, seedloader, features, labels):
     model.eval()
     ys = []
     y_hats = []
-    for it, seeds in enumerate(seedloader):
-        input_nodes, output_nodes, blocks = compiled_func(
-            matrix, seeds, [25, 10])
-        with torch.no_grad():
+    with torch.no_grad():
+        for it, seeds in enumerate(seedloader):
+            input_nodes, output_nodes, subMs = compiled_func(
+                matrix, seeds, [25, 10])
+            blocks = [block.to_dgl_block() for block in subMs]
             x = features[input_nodes]
             y = labels[output_nodes]
             ys.append(y)
@@ -187,15 +206,19 @@ def train(g, dataset, feat_device):
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     n_epoch = 10
+    epoch_time = []
+    epoch_sample = []
 
     for epoch in range(n_epoch):
         torch.cuda.synchronize()
         start = time.time()
+
         model.train()
         total_loss = 0
         for it, seeds in enumerate(train_seedloader):
-            input_nodes, output_nodes, blocks = compiled_func(m, seeds, [
-                                                              25, 10])
+            input_nodes, output_nodes, subMs = compiled_func(m, seeds, [
+                25, 10])
+            blocks = [block.to_dgl_block() for block in subMs]
             x = features[input_nodes]
             y = labels[output_nodes]
             y_hat = model(blocks, x)
@@ -206,16 +229,19 @@ def train(g, dataset, feat_device):
             total_loss += loss.item()
         acc = evaluate(model, m, compiled_func,
                        val_seedloader, features, labels)
-        print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} "
-              .format(epoch, total_loss / (it+1), acc.item()))
-        torch.cuda.synchronize()
-        time_list.append(time.time() - start)
-        # global batch_time
-        # time_list.append(batch_time)
-        # batch_time = 0
-        print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
 
-    print('Average epoch time:', np.mean(time_list[3:]))
+        torch.cuda.synchronize()
+        epoch_time.append(time.time() - start)
+        global batch_time
+        epoch_sample.append(batch_time)
+        batch_time = 0
+
+        print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} | E2E Time {:.4f} s | Epoch Sample Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch, total_loss / (it+1), acc.item(), epoch_time[-1], epoch_sample[-1], torch.cuda.max_memory_reserved() /
+                      (1024 * 1024 * 1024)))
+
+    print('Average epoch e2e time:', np.mean(epoch_time[3:]))
+    print('Average epoch sample time:', np.mean(epoch_sample[3:]))
 
     print('Testing...')
     acc = layerwise_infer(g, test_idx, model,
@@ -232,7 +258,8 @@ if __name__ == '__main__':
     feat_device = args.fmode
     # load and preprocess dataset
     print('Loading data')
-    g, features, labels, n_classes, splitted_idx = load_custom_reddit(file_path)
+    # g, features, labels, n_classes, splitted_idx = load_custom_reddit()
+    g, features, labels, n_classes, splitted_idx = load_graph.load_reddit()
     g = g.to('cuda')
     train_mask, val_mask, test_mask = splitted_idx['train'], splitted_idx['val'], splitted_idx['test']
     train_idx = train_mask.to(device)

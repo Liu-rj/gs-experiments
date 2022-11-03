@@ -5,21 +5,24 @@ from dgl.dataloading import DataLoader, NeighborSampler
 from dgl.utils import pin_memory_inplace
 from dgl.data import RedditDataset
 from model import *
-from graphsage_sampler import *
+from sampler import *
 import time
 import argparse
 import os
 from ctypes import *
 from ctypes.util import *
 import numpy as np
+from gs.utils import load_graph
 
-libgraphPath = '../libgraph.so'
-libgraph = CDLL(libgraphPath)
-libgraph.loadgraph.argtypes = [c_char_p]
+
 device = torch.device('cuda')
-file_path = "/home/ubuntu/NextDoorEval/NextDoor/input/reddit.data"
 
-def load_custom_reddit(filename):
+
+def load_custom_reddit():
+    libgraphPath = '../libgraph.so'
+    libgraph = CDLL(libgraphPath)
+    libgraph.loadgraph.argtypes = [c_char_p]
+    filename = "/home/ubuntu/NextDoorEval/NextDoor/input/reddit.data"
     if not os.path.exists(filename):
         raise Exception("'%s' do not exist" % (filename))
 
@@ -103,6 +106,7 @@ def train_dgl(g, dataset, feat_device):
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     time_list = []
+    epoch_sample = []
     n_epoch = 10
 
     for epoch in range(n_epoch):
@@ -120,15 +124,18 @@ def train_dgl(g, dataset, feat_device):
             opt.step()
             total_loss += loss.item()
         acc = evaluate_dgl(model, g, val_dataloader, features, labels)
-        print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} "
-              .format(epoch, total_loss / (it+1), acc.item()))
+        
         torch.cuda.synchronize()
         time_list.append(time.time() - start)
-        # time_list.append(sampler.sample_time)
-        # sampler.sample_time = 0
-        print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
+        epoch_sample.append(sampler.sample_time)
+        sampler.sample_time = 0
 
-    print('Average epoch time:', np.mean(time_list[3:]))
+        print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch, total_loss / (it+1), acc.item(), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_reserved() /
+                      (1024 * 1024 * 1024)))
+
+    print('Average epoch end2end time:', np.mean(time_list[3:]))
+    print('Average epoch sampling time:', np.mean(epoch_sample[3:]))
 
     print('Testing...')
     acc = layerwise_infer(g, test_idx, model,
@@ -199,8 +206,8 @@ if __name__ == '__main__':
             use_uva = True
     # load and preprocess dataset
     print('Loading data')
-    g, features, labels, n_classes, splitted_idx = load_custom_reddit(
-        file_path)
+    # g, features, labels, n_classes, splitted_idx = load_custom_reddit()
+    g, features, labels, n_classes, splitted_idx = load_graph.load_reddit()
     g = g.to('cuda')
     train_mask, val_mask, test_mask = splitted_idx['train'], splitted_idx['val'], splitted_idx['test']
     train_idx = train_mask.to(device)
