@@ -96,11 +96,13 @@ class GraphSAGE_Nextdoor(nn.Module):
 
 
 class GraphSAGE_DGL(nn.Module):
-    def __init__(self, in_size, hid_size, out_size, feat_device):
+    def __init__(self, in_size, hid_size, out_size, num_layers, feat_device):
         super().__init__()
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
         self.layers.append(SAGEConv(in_size, hid_size, 'mean'))
+        for i in range(num_layers - 2):
+            self.layers.append(SAGEConv(hid_size, hid_size, 'mean'))
         self.layers.append(SAGEConv(hid_size, out_size, 'mean'))
         self.dropout = nn.Dropout(0.5)
         self.hid_size = hid_size

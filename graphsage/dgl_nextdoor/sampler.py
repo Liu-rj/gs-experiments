@@ -116,14 +116,13 @@ class DGLNeighborSampler(BlockSampler):
                 seed_nodes, fanout, edge_dir=self.edge_dir, prob=self.prob,
                 replace=self.replace, output_device=self.output_device,
                 exclude_edges=exclude_eids)
-            blocks.insert(0, (frontier, seed_nodes))
+            block = to_block(frontier, seed_nodes)
             # torch.cuda.nvtx.range_push('all indices')
-            edges = frontier.edges()
-            seed_nodes = torch.unique(torch.cat(edges))
+            seed_nodes = block.srcdata[dgl.NID]
             # torch.cuda.nvtx.range_pop()
+            blocks.insert(0, block)
         # torch.cuda.nvtx.range_pop()
+        input_nodes = seed_nodes
         torch.cuda.synchronize()
         self.sample_time += time.time() - start
-        blocks = [to_block(frontier, seed_nodes)
-                  for frontier, seed_nodes in blocks]
-        return seed_nodes, output_nodes, blocks
+        return input_nodes, output_nodes, blocks

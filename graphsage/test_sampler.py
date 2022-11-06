@@ -77,7 +77,7 @@ def bench(name, func, graph, fanouts, iters, node_idx):
     time_list = []
     mem_list = []
     seedloader = SeedGenerator(
-        node_idx, batch_size=1024, shuffle=True, drop_last=False)
+        node_idx, batch_size=64, shuffle=True, drop_last=False)
     for i in range(iters):
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
@@ -101,9 +101,8 @@ def bench(name, func, graph, fanouts, iters, node_idx):
 
 
 device = torch.device('cuda:%d' % 0)
-dgl_graph = load_ogbn_papers100M()
-g = dgl_graph.long()
-g = g.to("cuda")
+datasets = load_graph.load_reddit()
+g = datasets[0].long().to("cuda")
 matrix = gs.Matrix(gs.Graph(False))
 matrix.load_dgl_graph(g)
 nodes = g.nodes()

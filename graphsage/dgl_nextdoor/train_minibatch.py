@@ -13,6 +13,7 @@ from ctypes import *
 from ctypes.util import *
 import numpy as np
 from gs.utils import load_graph
+from tqdm import tqdm
 
 
 device = torch.device('cuda')
@@ -40,31 +41,20 @@ def load_custom_reddit():
     dst_ids = torch.tensor(edges[:, 1])
     dgl_graph = dgl.graph((src_ids, dst_ids), idtype=torch.int64)
     num_nodes = dgl_graph.num_nodes()
-    
+
     data = RedditDataset(self_loop=True)
     g = data[0]
     n_classes = data.num_classes
-    train_nid = torch.nonzero(g.ndata["train_mask"][:num_nodes], as_tuple=True)[0]
-    test_nid = torch.nonzero(g.ndata["test_mask"][:num_nodes], as_tuple=True)[0]
+    train_nid = torch.nonzero(
+        g.ndata["train_mask"][:num_nodes], as_tuple=True)[0]
+    test_nid = torch.nonzero(
+        g.ndata["test_mask"][:num_nodes], as_tuple=True)[0]
     val_nid = torch.nonzero(g.ndata["val_mask"][:num_nodes], as_tuple=True)[0]
     splitted_idx = {"train": train_nid, "test": test_nid, "val": val_nid}
     feat = g.ndata['feat'][:num_nodes].clone()
     labels = g.ndata['label'][:num_nodes]
     g.ndata.clear()
     return dgl_graph, feat, labels, n_classes, splitted_idx
-
-
-def evaluate_dgl(model, graph, dataloader, features, labels):
-    model.eval()
-    ys = []
-    y_hats = []
-    for it, (input_nodes, output_nodes, blocks) in enumerate(dataloader):
-        with torch.no_grad():
-            x = features[input_nodes]
-            y = labels[output_nodes]
-            ys.append(y)
-            y_hats.append(model(blocks, x))
-    return MF.accuracy(torch.cat(y_hats), torch.cat(ys))
 
 
 def evaluate_nextdoor(model, graph, dataloader, features, labels):
@@ -90,31 +80,34 @@ def layerwise_infer(graph, nid, model, batch_size, feat, label):
 
 
 def train_dgl(g, dataset, feat_device):
+    batch_size = 64
+    num_layers = 3
     features, labels, n_classes, train_idx, val_idx, test_idx = dataset
     model = GraphSAGE_DGL(
-        features.shape[1], 256, n_classes, feat_device).to(device)
+        features.shape[1], 64, n_classes, num_layers, feat_device).to(device)
     # create sampler & dataloader
-    sampler = DGLNeighborSampler([25, 10], replace=True)
+    sampler = DGLNeighborSampler([25, 10, 10])
     train_dataloader = DataLoader(g, train_idx, sampler, device=device,
-                                  batch_size=1024, shuffle=True,
+                                  batch_size=batch_size, shuffle=True,
                                   drop_last=False, num_workers=0)
 
     val_dataloader = DataLoader(g, val_idx, sampler, device=device,
-                                batch_size=1024, shuffle=True,
+                                batch_size=batch_size, shuffle=True,
                                 drop_last=False, num_workers=0)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     time_list = []
     epoch_sample = []
-    n_epoch = 10
+    n_epoch = 2
 
     for epoch in range(n_epoch):
         torch.cuda.synchronize()
         start = time.time()
+
         model.train()
         total_loss = 0
-        for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
+        for it, (input_nodes, output_nodes, blocks) in enumerate(tqdm(train_dataloader)):
             x = features[input_nodes]
             y = labels[output_nodes]
             y_hat = model(blocks, x)
@@ -123,8 +116,18 @@ def train_dgl(g, dataset, feat_device):
             loss.backward()
             opt.step()
             total_loss += loss.item()
-        acc = evaluate_dgl(model, g, val_dataloader, features, labels)
-        
+
+        model.eval()
+        ys = []
+        y_hats = []
+        for it, (input_nodes, output_nodes, blocks) in enumerate(tqdm(val_dataloader)):
+            with torch.no_grad():
+                x = features[input_nodes]
+                y = labels[output_nodes]
+                ys.append(y)
+                y_hats.append(model(blocks, x))
+        acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys))
+
         torch.cuda.synchronize()
         time_list.append(time.time() - start)
         epoch_sample.append(sampler.sample_time)
@@ -136,11 +139,6 @@ def train_dgl(g, dataset, feat_device):
 
     print('Average epoch end2end time:', np.mean(time_list[3:]))
     print('Average epoch sampling time:', np.mean(epoch_sample[3:]))
-
-    print('Testing...')
-    acc = layerwise_infer(g, test_idx, model,
-                          batch_size=4096, feat=features, label=labels)
-    print("Test Accuracy {:.4f}".format(acc.item()))
 
 
 def train_nextdoor(g, dataset, feat_device, use_uva):
@@ -186,11 +184,6 @@ def train_nextdoor(g, dataset, feat_device, use_uva):
 
     print('Average epoch time:', accumulated_time / n_epoch)
 
-    print('Testing...')
-    acc = layerwise_infer(g, test_idx, model,
-                          batch_size=4096, feat=features, label=labels)
-    print("Test Accuracy {:.4f}".format(acc.item()))
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -208,6 +201,7 @@ if __name__ == '__main__':
     print('Loading data')
     # g, features, labels, n_classes, splitted_idx = load_custom_reddit()
     g, features, labels, n_classes, splitted_idx = load_graph.load_reddit()
+    print(g)
     g = g.to('cuda')
     train_mask, val_mask, test_mask = splitted_idx['train'], splitted_idx['val'], splitted_idx['test']
     train_idx = train_mask.to(device)

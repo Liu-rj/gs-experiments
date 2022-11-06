@@ -52,64 +52,30 @@ class SAGEConv(nn.Module):
         with g.local_scope():
             g.srcdata['x'] = x
             g.dstdata['x'] = x[:g.number_of_dst_nodes()]
-            #g.edata['w'] = w
-            #g.update_all(fn.u_mul_e('x', 'w', 'm'), fn.sum('m', 'y'))
+            g.edata['w'] = w
+            g.update_all(fn.u_mul_e('x', 'w', 'm'), fn.sum('m', 'y'))
             g.update_all(fn.copy_u('x', 'm'), fn.mean('m', 'y'))
             h = torch.cat([g.dstdata['x'], g.dstdata['y']], 1)
             return self.W(h)
 
 
 class Model(nn.Module):
-    def __init__(self, in_feats, n_hidden, n_classes, n_layers, conv=GraphConv, dropout=0):
+    def __init__(self, in_feats, n_hidden, n_classes, n_layers):
         super().__init__()
-
         self.n_hidden = n_hidden
         self.n_classes = n_classes
 
-        self.dropout = nn.Dropout(dropout)
         self.convs = nn.ModuleList()
-        self.convs.append(conv(in_feats, n_hidden))
+        self.convs.append(GraphConv(in_feats, n_hidden))
         for i in range(n_layers - 2):
-            self.convs.append(conv(n_hidden, n_hidden))
-        self.convs.append(conv(n_hidden, n_classes))
+            self.convs.append(GraphConv(n_hidden, n_hidden))
+        self.convs.append(GraphConv(n_hidden, n_classes))
 
     def forward(self, blocks, x):
         if not isinstance(blocks, list):
             blocks = [blocks] * len(self.convs)
         for i, (conv, block) in enumerate(zip(self.convs, blocks)):
-            x = self.dropout(x)
             x = conv(block, x, block.edata['w'])
             if i != len(self.convs) - 1:
                 x = F.relu(x)
         return x
-
-    def inference(self, g, x, w, batch_size, device, num_workers):
-        with torch.no_grad():
-            for l, layer in enumerate(self.convs):
-                y = torch.zeros(g.number_of_nodes(), self.n_hidden if l != len(
-                    self.convs) - 1 else self.n_classes)
-
-                sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
-                dataloader = dgl.dataloading.NodeDataLoader(
-                    g,
-                    torch.arange(g.number_of_nodes()).cuda(),
-                    sampler,
-                    batch_size=batch_size,
-                    shuffle=True,
-                    drop_last=False,
-                    num_workers=num_workers, device=device)
-
-                for input_nodes, output_nodes, blocks in tqdm.tqdm(dataloader):
-                    block = blocks[0]
-
-                    block = block.int().to(device)
-                    h = x[input_nodes].to(device)
-                    w_block = w[block.edata[dgl.EID]].to(device)
-                    h = layer(block, h, w_block)
-                    if l != len(self.convs) - 1:
-                        h = F.relu(h)
-
-                    y[output_nodes] = h.cpu()
-
-                x = y
-            return y

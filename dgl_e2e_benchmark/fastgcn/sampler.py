@@ -1,81 +1,41 @@
 import dgl
+from dgl.utils import gather_pinned_tensor_rows
 import torch
-import numba
-from numba.core import types
-from numba.typed import Dict
 import numpy as np
 import time
 
 
-@numba.njit
-def find_indices_in(a, b):
-    d = Dict.empty(key_type=types.int64, value_type=types.int64)
-    for i, v in enumerate(b):
-        d[v] = i
-    ai = np.zeros_like(a)
-    for i, v in enumerate(a):
-        ai[i] = d.get(v, -1)
-    return ai
-
-
-@numba.jit
-def union(*arrays):
-    # Faster than np.union1d and torch.unique(torch.cat(...))
-    s = set()
-    for a in arrays:
-        s.update(a)
-    a = np.asarray(list(s))
-    return a
-
-
-class LADIESNeighborSampler(dgl.dataloading.BlockSampler):
-    def __init__(self, nodes_per_layer, weight='w', out_weight='w', replace=False):
-        # super().__init__(len(nodes_per_layer), return_eids=False)
+class FastGCNSampler(dgl.dataloading.BlockSampler):
+    def __init__(self, fanouts, replace=False, use_uva=False):
         super().__init__()
-        self.nodes_per_layer = nodes_per_layer
-        self.edge_weight = weight
-        self.output_weight = out_weight
+        self.fanouts = fanouts
         self.replace = replace
-        self.return_eids = False
-        self.epoch_sampling_time = 0
+        self.use_uva = use_uva
+        self.sampling_time = 0
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+        torch.cuda.synchronize()
+        start = time.time()
         blocks = []
         output_nodes = seed_nodes
-        for block_id in reversed(range(len(self.nodes_per_layer))):
-            torch.cuda.synchronize()
-            start = time.time()
-
-            num_nodes_to_sample = self.nodes_per_layer[block_id]
-            insg = dgl.in_subgraph(g, seed_nodes)
-            insg = dgl.compact_graphs(insg, seed_nodes)
-            cand_nodes = insg.ndata[dgl.NID]
-            probs = g.out_degrees().float().cuda()[cand_nodes]
-
-            neighbor_nodes_idx = torch.multinomial(
-                probs, num_nodes_to_sample, replacement=False).cpu().numpy()
-            seed_nodes_idx = find_indices_in(
-                seed_nodes.cpu().numpy(), cand_nodes.cpu().numpy())
-            assert seed_nodes_idx.min() != -1
-            neighbor_nodes_idx = union(neighbor_nodes_idx, seed_nodes_idx)
-            seed_nodes_local_idx = torch.from_numpy(
-                find_indices_in(seed_nodes_idx, neighbor_nodes_idx)).cuda()
-            assert seed_nodes_idx.min().item() != -1
-            neighbor_nodes_idx = torch.from_numpy(neighbor_nodes_idx).cuda()
-
-            sg = insg.subgraph(neighbor_nodes_idx)
-            nids = insg.ndata[dgl.NID][sg.ndata[dgl.NID]]
-
-            torch.cuda.synchronize()
-            self.epoch_sampling_time += time.time() - start
-
-            block = dgl.to_block(sg, seed_nodes_local_idx)
-            # correct node ID mapping
-            block.srcdata[dgl.NID] = nids[block.srcdata[dgl.NID]]
-            block.dstdata[dgl.NID] = nids[block.dstdata[dgl.NID]]
-
+        probs = g.ndata['w']
+        for fanout in self.fanouts:
+            subg = dgl.in_subgraph(g, seed_nodes)
+            edges = subg.edges()
+            nodes = torch.unique(edges[0])
+            num_pick = np.min([nodes.shape[0], fanout])
+            if self.use_uva:
+                node_probs = gather_pinned_tensor_rows(probs, nodes)
+            else:
+                node_probs = probs[nodes]
+            idx = torch.multinomial(node_probs, num_pick, replacement=False)
+            selected = nodes[idx]
+            selected = torch.cat((seed_nodes, selected)).unique()
+            subg = dgl.out_subgraph(subg, selected)
+            block = dgl.to_block(subg, seed_nodes)
             seed_nodes = block.srcdata[dgl.NID]
-            block.create_formats_()
             blocks.insert(0, block)
-
-        return seed_nodes, output_nodes, blocks
+        input_nodes = seed_nodes
+        torch.cuda.synchronize()
+        self.sampling_time += time.time() - start
+        return input_nodes, output_nodes, blocks

@@ -1,4 +1,3 @@
-from cProfile import label
 import gs
 from gs.jit.passes import dce
 from gs.utils import SeedGenerator
