@@ -37,20 +37,15 @@ class ItemToItemBatchSampler(IterableDataset):
         self.user_to_item_etype = list(g.metagraph()[user_type][item_type])[0]
         self.item_to_user_etype = list(g.metagraph()[item_type][user_type])[0]
         self.batch_size = batch_size
-        self.sampling_time = 0
 
     def __iter__(self):
         while True:
             heads = torch.randint(0, self.g.num_nodes(
                 self.item_type), (self.batch_size,), device=self.g.device)
-            torch.cuda.synchronize()
-            start = time.time()
             tails = dgl.sampling.random_walk(
                 self.g,
                 heads,
                 metapath=[self.item_to_user_etype, self.user_to_item_etype])[0][:, 2]
-            torch.cuda.synchronize()
-            self.sampling_time += time.time() - start
             neg_tails = torch.randint(0, self.g.num_nodes(
                 self.item_type), (self.batch_size,), device=self.g.device)
 
@@ -114,13 +109,13 @@ def assign_simple_node_features(ndata, g, ntype, assign_id=False):
         if not assign_id and col == dgl.NID:
             continue
         induced_nodes = ndata[dgl.NID]
-        ndata[col] = g.nodes[ntype].data[col][induced_nodes]
+        ndata[col] = g.nodes[ntype].data[col][induced_nodes].to('cuda')
 
 
 def assign_textual_node_features(ndata, features):
     node_ids = ndata[dgl.NID]
     for field_name, field in features.items():
-        ndata[field_name] = field[node_ids]
+        ndata[field_name] = field[node_ids].to('cuda')
 
 
 def assign_features_to_blocks(blocks, g, features, ntype):
@@ -137,24 +132,15 @@ class PinSAGECollator(object):
         self.sampler = sampler
         self.ntype = ntype
         self.g = g
-        self.sampling_time = 0
 
     def collate_train(self, batches):
-        torch.cuda.synchronize()
-        start = time.time()
         heads, tails, neg_tails = batches[0]
         # Construct multilayer neighborhood via PinSAGE...
         pos_graph, neg_graph, blocks = self.sampler.sample_from_item_pairs(
             heads, tails, neg_tails)
-        torch.cuda.synchronize()
-        self.sampling_time += time.time() - start
         return pos_graph, neg_graph, blocks
 
     def collate_test(self, seeds):
-        torch.cuda.synchronize()
-        start = time.time()
         # batch = torch.LongTensor(samples).to(self.g.device)
         blocks = self.sampler.sample_blocks(seeds)
-        torch.cuda.synchronize()
-        self.sampling_time += time.time() - start
         return blocks

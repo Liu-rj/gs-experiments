@@ -106,7 +106,7 @@ def train(args):
         net.epoch_sample_time = 0
 
         print("Epoch {:05d} | Loss {:.4f} | AUC {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch + 1, test_loss / len(test_seedloader), total_roc / len(test_seedloader), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_reserved() /
+              .format(epoch + 1, test_loss / len(test_seedloader), total_roc / len(test_seedloader), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_allocated() /
                       (1024 * 1024 * 1024)))
 
     print('Average epoch end2end time:', np.mean(time_list[3:]))

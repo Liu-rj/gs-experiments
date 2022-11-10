@@ -1,8 +1,8 @@
 import dgl
 import torch
-import time
 from dgl.utils import gather_pinned_tensor_rows
 import numpy as np
+import gs
 
 
 class LADIESSampler(dgl.dataloading.BlockSampler):
@@ -13,12 +13,9 @@ class LADIESSampler(dgl.dataloading.BlockSampler):
         self.output_weight = out_weight
         self.replace = replace
         self.return_eids = False
-        self.sampling_time = 0
         self.use_uva = use_uva
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
-        torch.cuda.synchronize()
-        start = time.time()
         blocks = []
         output_nodes = seed_nodes
         W = g.edata[self.edge_weight]
@@ -54,6 +51,21 @@ class LADIESSampler(dgl.dataloading.BlockSampler):
             seed_nodes = block.srcdata[dgl.NID]
             blocks.insert(0, block)
         input_nodes = seed_nodes
-        torch.cuda.synchronize()
-        self.sampling_time += time.time() - start
         return input_nodes, output_nodes, blocks
+
+
+def ladies_matrix_sampler(P: gs.Matrix, seeds, fanouts, all_nodes):
+    output_node = seeds
+    ret = []
+    for fanout in fanouts:
+        U = P[:, seeds]
+        prob = U.sum(axis=1, powk=2)
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            all_nodes, prob, fanout, False)
+        nodes = torch.cat((seeds, selected)).unique()  # add self-loop
+        subU = U[nodes, :].divide(prob[nodes], axis=1).normalize(axis=0)
+        block = subU.to_dgl_block()
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_node = seeds
+    return input_node, output_node, ret

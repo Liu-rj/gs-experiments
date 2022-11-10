@@ -22,14 +22,14 @@ batch_time = 0
 
 def fastgcn_sampler(A: gs.Matrix, seeds: torch.Tensor, probs: torch.Tensor, fanouts: list):
     global batch_time
-    
+
     # torch.cuda.nvtx.range_push('fastgcn sampler func')
     output_nodes = seeds
     ret = []
     for fanout in fanouts:
         # torch.cuda.synchronize()
         # start = time.time()
-        
+
         # torch.cuda.nvtx.range_push('columnwise slicing')
         subA = A[:, seeds]
         # torch.cuda.nvtx.range_pop()
@@ -37,23 +37,23 @@ def fastgcn_sampler(A: gs.Matrix, seeds: torch.Tensor, probs: torch.Tensor, fano
         row_indices = subA.row_ids()
         # torch.cuda.nvtx.range_pop()
         # torch.cuda.nvtx.range_push('list sampling uniform')
-        
+
         # selected, _ = torch.ops.gs_ops.list_sampling(row_indices,
         #                                              fanout, False)
-        
+
         selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, probs[row_indices], fanout, False)
-        
+
         # torch.cuda.nvtx.range_pop()
         # torch.cuda.nvtx.range_push('rowwise slicing')
         subA = subA[selected, :]
         seeds = subA.all_indices()
         # torch.cuda.nvtx.range_pop()
         # torch.cuda.nvtx.range_push('relabel')
-        
+
         # torch.cuda.synchronize()
         # batch_time += time.time() - start
-        
+
         ret.insert(0, subA.to_dgl_block())
     input_nodes = seeds
     # torch.cuda.nvtx.range_pop()
@@ -207,7 +207,7 @@ def train(g, dataset, feat_device):
         # batch_time = 0
 
         print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} | E2E Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, total_loss / (it+1), acc.item(), time_list[-1], torch.cuda.max_memory_reserved() /
+              .format(epoch, total_loss / (it+1), acc.item(), time_list[-1], torch.cuda.max_memory_allocated() /
                       (1024 * 1024 * 1024)))
 
     print('Average epoch sampling time:', np.mean(time_list[3:]))

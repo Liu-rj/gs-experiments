@@ -145,7 +145,7 @@ def train(dataset, args):
 
     # Model
     model = PinSAGEModel(g, item_ntype, textset,
-                         args.hidden_dims, args.num_layers).to(device)
+                         args.hidden_dims, args.num_layers).to('cuda')
     # Optimizer
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -161,33 +161,52 @@ def train(dataset, args):
     # For each batch of head-tail-negative triplets...
     for epoch in range(args.num_epochs):
         epoch_feature_loading = 0
+        sample_time = 0
         torch.cuda.synchronize()
         start = time.time()
+
         model.train()
+        torch.cuda.synchronize()
+        tic = time.time()
         for batch_id in tqdm.trange(args.batches_per_epoch):
             pos_graph, neg_graph, blocks = next(dataloader_it)
             torch.cuda.synchronize()
-            temp = time.time()
+            sample_time += time.time() - tic
+
+            tic = time.time()
+            pos_graph, neg_graph = pos_graph.to('cuda'), neg_graph.to('cuda')
+            blocks = [block.to('cuda') for block in blocks]
             assign_features_to_blocks(blocks, g, features, item_ntype)
             torch.cuda.synchronize()
-            epoch_feature_loading += time.time() - temp
+            epoch_feature_loading += time.time() - tic
+
             loss = model(pos_graph, neg_graph, blocks).mean()
             opt.zero_grad()
             loss.backward()
             opt.step()
+            torch.cuda.synchronize()
+            tic = time.time()
 
         # Evaluate
         model.eval()
         with torch.no_grad():
             h_item_batches = []
+            torch.cuda.synchronize()
+            tic = time.time()
             for batch_id, seeds in enumerate(tqdm.tqdm(dataloader_test)):
                 blocks = collator.collate_test(seeds)
                 torch.cuda.synchronize()
-                temp = time.time()
-                assign_features_to_blocks(blocks, g, features, item_ntype)
+                sample_time += time.time() - tic
+
+                tic = time.time()
+                blocks = [block.to('cuda') for block in blocks]
+                assign_features_to_blocks(
+                    blocks, g, features, item_ntype)
                 torch.cuda.synchronize()
-                epoch_feature_loading += time.time() - temp
+                epoch_feature_loading += time.time() - tic
                 h_item_batches.append(model.get_repr(blocks))
+                torch.cuda.synchronize()
+                tic = time.time()
             h_item = torch.cat(h_item_batches, 0)
 
             # hit, sampling_time = evaluation.evaluate_nn(
@@ -196,10 +215,8 @@ def train(dataset, args):
 
         torch.cuda.synchronize()
         epoch_time.append(time.time() - start)
-        time_list.append(collator.sampling_time + batch_sampler.sampling_time)
-        collator.sampling_time = 0
-        batch_sampler.sampling_time = 0
-        mem_list.append((torch.cuda.max_memory_reserved() -
+        time_list.append(sample_time)
+        mem_list.append((torch.cuda.max_memory_allocated() -
                         static_memory) / (1024 * 1024 * 1024))
         feature_loading_list.append(epoch_feature_loading)
 

@@ -2,7 +2,7 @@ import dgl
 from dgl.utils import gather_pinned_tensor_rows
 import torch
 import numpy as np
-import time
+import gs
 
 
 class FastGCNSampler(dgl.dataloading.BlockSampler):
@@ -11,11 +11,8 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
         self.fanouts = fanouts
         self.replace = replace
         self.use_uva = use_uva
-        self.sampling_time = 0
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
-        torch.cuda.synchronize()
-        start = time.time()
         blocks = []
         output_nodes = seed_nodes
         probs = g.ndata['w']
@@ -36,6 +33,24 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
             seed_nodes = block.srcdata[dgl.NID]
             blocks.insert(0, block)
         input_nodes = seed_nodes
-        torch.cuda.synchronize()
-        self.sampling_time += time.time() - start
         return input_nodes, output_nodes, blocks
+
+
+def fastgcn_matrix_sampler(A: gs.Matrix, seeds, probs, fanouts, use_uva):
+    output_nodes = seeds
+    ret = []
+    for fanout in fanouts:
+        subA = A[:, seeds]
+        row_indices = subA.row_ids()
+        if use_uva:
+            node_probs = gather_pinned_tensor_rows(probs, row_indices)
+        else:
+            node_probs = probs[row_indices]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, node_probs, fanout, False)
+        subA = subA[selected, :]
+        block = subA.to_dgl_block()
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, ret

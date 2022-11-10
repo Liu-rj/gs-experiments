@@ -134,7 +134,7 @@ def train_dgl(g, dataset, feat_device):
         sampler.sample_time = 0
 
         print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, total_loss / (it+1), acc.item(), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_reserved() /
+              .format(epoch, total_loss / (it+1), acc.item(), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_allocated() /
                       (1024 * 1024 * 1024)))
 
     print('Average epoch end2end time:', np.mean(time_list[3:]))
@@ -180,7 +180,7 @@ def train_nextdoor(g, dataset, feat_device, use_uva):
         # accumulated_time += sampler.sample_time
         # sampler.sample_time = 0
         accumulated_time += time.time() - start
-        # print(torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024), 'GB')
+        # print(torch.cuda.max_memory_allocated() / (1024 * 1024 * 1024), 'GB')
 
     print('Average epoch time:', accumulated_time / n_epoch)
 

@@ -54,8 +54,7 @@ class Model(nn.Module):
         self.hid_size = hid_size
         self.out_size = out_size
 
-    def forward(self, blocks, x):
-        h = x
+    def forward(self, blocks, h):
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
             h = layer(block, h)
             if l != len(self.layers) - 1:

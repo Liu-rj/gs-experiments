@@ -173,7 +173,7 @@ def train(g, dataset, feat_device):
         batch_time = 0
 
         print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, total_loss / (it+1), acc.item(), epoch_time[-1], time_list[-1], torch.cuda.max_memory_reserved() /
+              .format(epoch, total_loss / (it+1), acc.item(), epoch_time[-1], time_list[-1], torch.cuda.max_memory_allocated() /
                       (1024 * 1024 * 1024)))
 
     print('Average epoch end2end time:', np.mean(epoch_time[3:]))
