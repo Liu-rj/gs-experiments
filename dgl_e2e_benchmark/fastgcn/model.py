@@ -1,19 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import dgl
 import dgl.function as fn
-import tqdm
-import dgl.nn as dglnn
-
-
-def degree_ndata(g, weight=None):
-    with g.local_scope():
-        if weight is None:
-            weight = 'W'
-            g.edata[weight] = torch.ones(g.number_of_edges(), device=g.device)
-        g.ndata['v'] = torch.ones(g.number_of_nodes(), device=g.device)
-        return g.ndata['v']
 
 
 class GraphConv(nn.Module):

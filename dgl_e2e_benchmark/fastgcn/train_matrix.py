@@ -29,12 +29,13 @@ def train(dataset, args):
     probs = g.out_degrees().float()
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        probs = probs.pin_memory()
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
         train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
+        probs = probs.cuda()
     else:
         features, labels = features.to(device), labels.to(device)
+        probs = probs.to(device)
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
@@ -74,7 +75,7 @@ def train(dataset, args):
         for it, seeds in enumerate(tqdm.tqdm(train_seedloader)):
             seeds = seeds.to('cuda')
             input_nodes, output_nodes, blocks = compiled_func(
-                m, seeds, probs, fanouts, use_uva)
+                m, seeds, probs, fanouts)
             torch.cuda.synchronize()
             sample_time += time.time() - tic
 
@@ -111,7 +112,7 @@ def train(dataset, args):
             for it, seeds in enumerate(tqdm.tqdm(val_seedloader)):
                 seeds = seeds.to('cuda')
                 input_nodes, output_nodes, blocks = compiled_func(
-                    m, seeds, probs, fanouts, use_uva)
+                    m, seeds, probs, fanouts)
                 torch.cuda.synchronize()
                 sample_time += time.time() - tic
 

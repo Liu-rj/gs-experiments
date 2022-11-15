@@ -22,15 +22,16 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
-    g.ndata['w'] = g.out_degrees().float()
+    probs = g.out_degrees().float()
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        g.ndata['w'] = g.ndata['w'].pin_memory()
+        probs = probs.cuda()
     else:
         features, labels = features.to(device), labels.to(device)
+        probs = probs.to(device)
 
     num_nodes = args['num_nodes']
-    sampler = FastGCNSampler(num_nodes, replace=False, use_uva=use_uva)
+    sampler = FastGCNSampler(num_nodes, replace=False, probs=probs)
     train_dataloader = DataLoader(
         g,
         train_nid,

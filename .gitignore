@@ -6,3 +6,4 @@ data
 datasets
 *.pyc
 outputs
+tmp
