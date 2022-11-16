@@ -22,19 +22,20 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
-    g.edata['weight'] = normalized_laplacian_edata(g)
+    adj_weight = normalized_laplacian_edata(g)
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        g.edata['weight'] = g.edata['weight'].pin_memory()
+        adj_weight = adj_weight.cuda()
     else:
         features, labels = features.to(device), labels.to(device)
+        adj_weight = adj_weight.to(device)
     g.ndata['feat'] = features
 
     num_nodes = args['num_nodes']
     model = Model(features.shape[1],
                   args['hidden_dim'], n_classes, len(num_nodes)).to('cuda')
     sampler = FastGCNSampler(num_nodes, replace=False,
-                             use_uva=use_uva, W=model.W_g)
+                             use_uva=use_uva, W=model.W_g, eweight=adj_weight)
     train_dataloader = DataLoader(
         g,
         train_nid,
@@ -157,7 +158,7 @@ def train(dataset, args):
 
 if __name__ == '__main__':
     config = {
-        'num_epochs': 10,
+        'num_epochs': 5,
         'hidden_dim': 64}
 
     parser = argparse.ArgumentParser()
@@ -182,12 +183,11 @@ if __name__ == '__main__':
     config['num_workers'] = args.num_workers
     print(config)
 
-    # if args.dataset == 'reddit':
-    #     dataset = load_reddit()
-    # elif args.dataset == 'products':
-    #     dataset = load_ogb('ogbn-products')
-    # elif args.dataset == 'papers100m':
-    #     dataset = load_ogb('ogbn-papers100M')
-    dataset = load_cora()
+    if args.dataset == 'reddit':
+        dataset = load_reddit()
+    elif args.dataset == 'products':
+        dataset = load_ogb('ogbn-products')
+    elif args.dataset == 'papers100m':
+        dataset = load_ogb('ogbn-papers100M')
     print(dataset[0])
     train(dataset, config)

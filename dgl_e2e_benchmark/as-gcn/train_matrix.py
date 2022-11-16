@@ -25,16 +25,21 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
+    adj_weight = normalized_laplacian_edata(g)
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
+    adj_weight = adj_weight[edge_ids]
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
         train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
+        adj_weight = adj_weight.cuda()
     else:
         features, labels = features.to(device), labels.to(device)
+        adj_weight = adj_weight.to(device)
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
+    m._graph._CAPI_set_data(adj_weight)
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
     # compiled_func = gs.jit.compile(
