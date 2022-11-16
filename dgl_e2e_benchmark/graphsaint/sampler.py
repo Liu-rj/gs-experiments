@@ -5,7 +5,7 @@ from dgl.dataloading import BlockSampler
 import time
 
 class GraphSaintSampler(object):
-    def __init__(self, walk_length=5, use_uva=False):
+    def __init__(self, walk_length=4, use_uva=False):
         super().__init__()
         self.sampling_time = 0
         self.walk_length = walk_length
