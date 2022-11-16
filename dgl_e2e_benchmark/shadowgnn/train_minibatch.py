@@ -109,7 +109,7 @@ def train_dgl(dataset, config):
     epoch_list = []
     mem_list = []
     feature_loading_list = []
-    n_epoch = 1
+    n_epoch = config['num_epoch']
     static_memory = torch.cuda.memory_allocated()
     print('memory allocated before training:',
           static_memory / (1024 * 1024 * 1024), 'GB')
@@ -122,8 +122,6 @@ def train_dgl(dataset, config):
         tic = time.time()
         with tqdm.tqdm(train_dataloader) as tq:
             for step, (input_nodes, output_nodes, subg) in enumerate(tq):
-                if step == 10:
-                    break
                 torch.cuda.synchronize()
                 sampling_time+=time.time()-tic
                 temp = time.time()
@@ -157,8 +155,6 @@ def train_dgl(dataset, config):
         with torch.no_grad():
             with tqdm.tqdm(val_dataloader) as tq:
                 for it, (input_nodes, output_nodes, blocks) in enumerate(tq):
-                    if it == 10:
-                        break
                     torch.cuda.synchronize()
                     temp = time.time()
                     sampling_time+=time.time()-tic
@@ -210,7 +206,7 @@ if __name__ == '__main__':
                         help="batch size for training")
     parser.add_argument("--num-workers", type=int, default=0,
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
-    parser.add_argument("--num-epoch", type=int, default=5,
+    parser.add_argument("--num-epoch", type=int, default=2,
                         help="numbers of epoch in training")
     parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained'],
                         help="sample mode")
@@ -219,7 +215,6 @@ if __name__ == '__main__':
     config['use_uva'] = args.use_uva
     config['dataset'] = args.dataset
     config['batch_size'] = args.batchsize
-    config['num_nodes'] = [int(x.strip()) for x in args.samples.split(',')]
     config['num_workers'] = args.num_workers
     config['num_epoch'] = args.num_epoch
     config['sample_mode'] = args.sample_mode
