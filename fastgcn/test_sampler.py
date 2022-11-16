@@ -1,5 +1,4 @@
 import torch
-from gs.utils import load_graph
 import dgl
 import time
 import numpy as np
@@ -8,10 +7,28 @@ from gs.utils import SeedGenerator
 import numba
 from numba.core import types
 from numba.typed import Dict
+from dgl.utils import gather_pinned_tensor_rows
+from ogb.nodeproppred import DglNodePropPredDataset
+import tqdm
 import os
 
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
+
+def load_ogb(name):
+    data = DglNodePropPredDataset(name=name, root="../datasets")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g = g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(torch.unique(
+        labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
 
 
 @numba.njit
@@ -47,81 +64,65 @@ def dgl_sampler_local_id(g, seeds, fanouts, probs):
     return 1
 
 
-def dgl_sampler(g, seeds, fanouts, probs):
-    # torch.cuda.nvtx.range_push('dgl sampler')
+def dgl_sampler(g, seed_nodes, fanouts, probs, use_uva):
+    torch.cuda.nvtx.range_push('dgl sampler')
+    blocks = []
     for fanout in fanouts:
-        # torch.cuda.nvtx.range_push('in subgraph')
-        subg = dgl.in_subgraph(g, seeds)
-        # layer-wise sample
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('row ids')
+        torch.cuda.nvtx.range_push('in subgraph')
+        subg = dgl.in_subgraph(g, seed_nodes)  # coo
+        torch.cuda.nvtx.range_pop()
         edges = subg.edges()
-        nodes = torch.unique(edges[0])
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('list sample')
-        if probs is not None:
-            selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
-                nodes, probs[nodes], fanout, False)
-        else:
-            selected, _ = torch.ops.gs_ops.list_sampling(nodes,
-                                                         fanout, False)
-        selected = torch.cat((seeds, selected)).unique()
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('out subgraph')
-        ################
+        nodes = torch.unique(edges[0])  # coo row
+        num_pick = np.min([nodes.shape[0], fanout])
+        node_probs = probs[nodes]
+        torch.cuda.nvtx.range_push('multinomial')
+        idx = torch.multinomial(node_probs, num_pick, replacement=False)  # gpu
+        torch.cuda.nvtx.range_pop()
+        selected = nodes[idx]  # gpu
+        torch.cuda.nvtx.range_push('out subgraph')
         subg = dgl.out_subgraph(subg, selected)
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('all nodes')
-        seeds = selected
-        # torch.cuda.nvtx.range_pop()
-    # torch.cuda.nvtx.range_pop()
-    return 1
+        torch.cuda.nvtx.range_pop()
+        block = dgl.to_block(subg, seed_nodes)
+        seed_nodes = block.srcdata[dgl.NID]
+        blocks.insert(0, block)
+    torch.cuda.nvtx.range_pop()
+    return blocks
 
 
-def matrix_sampler(A: gs.Matrix, seeds, fanouts, probs):
+def matrix_sampler(A: gs.Matrix, seeds, fanouts, probs, use_uva):
     # torch.cuda.nvtx.range_push('matrix sampler')
+    blocks = []
     for fanout in fanouts:
-        # torch.cuda.nvtx.range_push('col slice')
         subA = A[:, seeds]
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('row ids')
         row_indices = subA.row_ids()
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('list sample')
-        if probs is not None:
-            selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
-                row_indices, probs[row_indices], fanout, False)
-        else:
-            selected, _ = torch.ops.gs_ops.list_sampling(row_indices,
-                                                         fanout, False)
-        selected = torch.cat((seeds, selected)).unique()
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('row slice')
+        node_probs = probs[row_indices]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, node_probs, fanout, False)
         subA = subA[selected, :]
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('all nodes')
-        seeds = selected
-        # torch.cuda.nvtx.range_pop()
+        block = subA.to_dgl_block()
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
     # torch.cuda.nvtx.range_pop()
     return 1
 
 
-def bench(name, func, graph, fanouts, probs, iters, node_idx):
+def bench(name, func, graph, fanouts, probs, use_uva, iters, node_idx):
     time_list = []
     mem_list = []
     seedloader = SeedGenerator(
-        node_idx, batch_size=1024, shuffle=False, drop_last=False)
+        node_idx, batch_size=2048, shuffle=False, drop_last=False)
     torch.cuda.reset_peak_memory_stats()
     graph_storage = torch.cuda.max_memory_allocated()
-    print('Raw Graph Storage:', graph_storage / (1024 * 1024 * 1024), 'GB')
-    print(torch.cuda.memory_allocated() / (1024 * 1024 * 1024), 'GB')
+    print('Static CUDA Storage:', graph_storage / (1024 * 1024 * 1024), 'GB')
     for i in range(iters):
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
         begin = time.time()
 
-        for it, seeds in enumerate(seedloader):
-            ret = func(graph, seeds, fanouts, probs)
+        for it, seeds in enumerate(tqdm.tqdm(seedloader)):
+            ret = func(graph, seeds, fanouts, probs, use_uva)
+            if it == 500:
+                break
 
         torch.cuda.synchronize()
         end = time.time()
@@ -137,15 +138,25 @@ def bench(name, func, graph, fanouts, probs, iters, node_idx):
           np.mean(mem_list[1:]), " GB.")
 
 
+use_uva = True
 device = torch.device('cuda:%d' % 0)
-dataset = load_graph.load_ogbn_products()
+dataset = load_ogb('ogbn-papers100M')
+# dataset = load_ogb('ogbn-products')
 dgl_graph = dataset[0]
 g = dgl_graph.long()
-g = g.to("cuda")
-matrix = gs.Matrix(gs.Graph(False))
-matrix.load_dgl_graph(g)
-nodes = g.nodes()
 probs = g.out_degrees().float().cuda()
+csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
+
+# probs = probs.pin_memory()
+csc_indptr = csc_indptr.pin_memory()
+csc_indices = csc_indices.pin_memory()
+# g = g.to("cuda")
+# probs = probs.cuda()
+
+matrix = gs.Matrix(gs.Graph(False))
+matrix._graph._CAPI_load_csc(csc_indptr, csc_indices)
+nodes = g.nodes().cuda()
+g.pin_memory_()
 print(g)
 print('DGL graph g', g.formats())
 
@@ -153,12 +164,12 @@ print('DGL graph g', g.formats())
 # bench('DGL Uniform FastGCN', dgl_sampler, g,
 #       [2000, 2000], None, iters=10, node_idx=nodes)
 bench('DGL Biased FastGCN', dgl_sampler, g,
-      [2000, 2000], probs, iters=2, node_idx=nodes)
+      [2000, 2000], probs, use_uva, iters=5, node_idx=nodes)
 
-bench('DGL Local Graph Biased FastGCN', dgl_sampler_local_id, g,
-      [2000, 2000], probs, iters=2, node_idx=nodes)
+# bench('DGL Local Graph Biased FastGCN', dgl_sampler_local_id, g,
+#       [2000, 2000], probs, iters=2, node_idx=nodes)
 
 # bench('Matrix Uniform FastGCN', matrix_sampler, matrix,
 #       [2000, 2000], None, iters=10, node_idx=nodes)
 bench('Matrix Biased FastGCN', matrix_sampler, matrix,
-      [2000, 2000], probs, iters=2, node_idx=nodes)
+      [2000, 2000], probs, use_uva, iters=5, node_idx=nodes)

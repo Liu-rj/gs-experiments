@@ -1,33 +1,27 @@
 import dgl
-from dgl.utils import gather_pinned_tensor_rows
 import torch
 import numpy as np
 import gs
 
 
 class FastGCNSampler(dgl.dataloading.BlockSampler):
-    def __init__(self, fanouts, replace=False, use_uva=False):
+    def __init__(self, fanouts, replace=False, probs=None):
         super().__init__()
         self.fanouts = fanouts
         self.replace = replace
-        self.use_uva = use_uva
+        self.probs = probs
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         blocks = []
         output_nodes = seed_nodes
-        probs = g.ndata['w']
         for fanout in self.fanouts:
             subg = dgl.in_subgraph(g, seed_nodes)
             edges = subg.edges()
             nodes = torch.unique(edges[0])
             num_pick = np.min([nodes.shape[0], fanout])
-            if self.use_uva:
-                node_probs = gather_pinned_tensor_rows(probs, nodes)
-            else:
-                node_probs = probs[nodes]
+            node_probs = self.probs[nodes]
             idx = torch.multinomial(node_probs, num_pick, replacement=False)
             selected = nodes[idx]
-            selected = torch.cat((seed_nodes, selected)).unique()
             subg = dgl.out_subgraph(subg, selected)
             block = dgl.to_block(subg, seed_nodes)
             seed_nodes = block.srcdata[dgl.NID]
@@ -36,16 +30,13 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
         return input_nodes, output_nodes, blocks
 
 
-def fastgcn_matrix_sampler(A: gs.Matrix, seeds, probs, fanouts, use_uva):
+def fastgcn_matrix_sampler(A: gs.Matrix, seeds, probs, fanouts):
     output_nodes = seeds
     ret = []
     for fanout in fanouts:
         subA = A[:, seeds]
         row_indices = subA.row_ids()
-        if use_uva:
-            node_probs = gather_pinned_tensor_rows(probs, row_indices)
-        else:
-            node_probs = probs[row_indices]
+        node_probs = probs[row_indices]
         selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, node_probs, fanout, False)
         subA = subA[selected, :]

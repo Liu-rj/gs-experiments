@@ -26,21 +26,21 @@ def train(dataset, args):
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
     weight = normalized_laplacian_edata(g)
-    all_nodes = g.nodes()
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
+    weight = weight[edge_ids]
     probs = g.out_degrees().float()
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        probs = probs.pin_memory()
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
         train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
-        weight, all_nodes = weight.pin_memory(), all_nodes.pin_memory()
+        weight, probs = weight.cuda(), probs.cuda()
     else:
         features, labels = features.to(device), labels.to(device)
+        weight, probs = weight.to(device), probs.to(device)
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_set_data(weight[edge_ids])
+    m._graph._CAPI_set_data(weight)
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
     model = Model(features.shape[1], 64, n_classes, 2).to('cuda')
@@ -79,7 +79,7 @@ def train(dataset, args):
         for it, seeds in enumerate(tqdm.tqdm(train_seedloader)):
             seeds = seeds.to('cuda')
             input_nodes, output_nodes, blocks = compiled_func(
-                m, seeds, fanouts, all_nodes)
+                m, seeds, fanouts)
             torch.cuda.synchronize()
             sample_time += time.time() - tic
 
@@ -116,7 +116,7 @@ def train(dataset, args):
             for it, seeds in enumerate(tqdm.tqdm(val_seedloader)):
                 seeds = seeds.to('cuda')
                 input_nodes, output_nodes, blocks = compiled_func(
-                    m, seeds, fanouts, all_nodes)
+                    m, seeds, fanouts)
                 torch.cuda.synchronize()
                 sample_time += time.time() - tic
 

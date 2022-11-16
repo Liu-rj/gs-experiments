@@ -7,7 +7,6 @@ from sampler import *
 from load_graph import *
 import argparse
 from dgl.utils import gather_pinned_tensor_rows
-import numpy as np
 import time
 
 
@@ -23,17 +22,20 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
-    W = normalized_laplacian_edata(g)
+    adj_weight = normalized_laplacian_edata(g)
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        W = W.cuda()
+        adj_weight = adj_weight.cuda()
     else:
         features, labels = features.to(device), labels.to(device)
-        W = W.to(device)
+        adj_weight = adj_weight.to(device)
+    g.ndata['feat'] = features
 
     num_nodes = args['num_nodes']
-    sampler = LADIESSampler(num_nodes, weight='weight',
-                            out_weight='w', replace=False, W=W)
+    model = Model(features.shape[1],
+                  args['hidden_dim'], n_classes, len(num_nodes)).to('cuda')
+    sampler = FastGCNSampler(num_nodes, replace=False,
+                             use_uva=use_uva, W=model.W_g, eweight=adj_weight)
     train_dataloader = DataLoader(
         g,
         train_nid,
@@ -51,10 +53,7 @@ def train(dataset, args):
         drop_last=False,
         num_workers=args['num_workers'], use_uva=use_uva)
 
-    model = Model(features.shape[1],
-                  args['hidden_dim'], n_classes, 2).to('cuda')
     opt = torch.optim.Adam(model.parameters(), lr=0.001)
-
     time_list = []
     epoch_time = []
     mem_list = []
@@ -90,12 +89,12 @@ def train(dataset, args):
             torch.cuda.synchronize()
             epoch_feature_loading += time.time() - tic
 
-            batch_pred = model(blocks, batch_inputs)
+            batch_pred, reg_loss = model(blocks, batch_inputs)
             is_labeled = batch_labels == batch_labels
             batch_labels = batch_labels[is_labeled].long()
             batch_pred = batch_pred[is_labeled]
-            loss = F.cross_entropy(batch_pred, batch_labels)
-            acc = compute_acc(batch_pred, batch_labels)
+            loss = F.cross_entropy(batch_pred, batch_labels) + 0.5 * reg_loss
+            # acc = compute_acc(batch_pred, batch_labels)
 
             opt.zero_grad()
             loss.backward()
@@ -128,7 +127,7 @@ def train(dataset, args):
                 torch.cuda.synchronize()
                 epoch_feature_loading += time.time() - tic
 
-                batch_pred = model(blocks, batch_inputs)
+                batch_pred, reg_loss = model(blocks, batch_inputs)
                 is_labeled = batch_labels == batch_labels
                 batch_labels = batch_labels[is_labeled].long()
                 batch_pred = batch_pred[is_labeled]
