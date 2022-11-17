@@ -17,18 +17,18 @@ class ShaDowKHopSampler(object):
     def sample(self, g, seed_nodes, exclude_eids=None):
         output_nodes = seed_nodes
         for fanout in reversed(self.fanouts):
-            torch.cuda.nvtx.range_push('dgl sample_neighbors') 
+        #    torch.cuda.nvtx.range_push('dgl sample_neighbors') 
             frontier = g.sample_neighbors(
                 seed_nodes, fanout,
                 replace=self.replace, prob=self.prob, exclude_edges=exclude_eids)
-            torch.cuda.nvtx.range_pop() 
-            torch.cuda.nvtx.range_push('dgl to blocks') 
+        #    torch.cuda.nvtx.range_pop() 
+        #    torch.cuda.nvtx.range_push('dgl to blocks') 
             block = transforms.to_block(frontier, seed_nodes)
-            torch.cuda.nvtx.range_pop() 
+        #    torch.cuda.nvtx.range_pop() 
             seed_nodes = block.srcdata[dgl.NID]
-        torch.cuda.nvtx.range_push('dgl subgraph') 
+        #torch.cuda.nvtx.range_push('dgl subgraph') 
         subg = g.subgraph(seed_nodes, relabel_nodes=True,store_ids=False)
-        torch.cuda.nvtx.range_pop() 
+        #torch.cuda.nvtx.range_pop() 
         return seed_nodes, output_nodes, subg
 
 

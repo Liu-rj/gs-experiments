@@ -79,8 +79,11 @@ def train_dgl(dataset, config):
 
     if use_uva:
         features, labels = features.pin_memory(), labels.pin_memory()
+    elif config['device']=='cuda':
+        g, train_nid, val_nid = g.to('cuda'), train_nid.to('cuda'), val_nid.to('cuda')
+        features = features.to('cuda')
+        labels = labels.to('cuda')
     else:
-        g, train_nid, val_nid = g.to(device), train_nid.to(device), val_nid.to(device)
         features = features.to('cuda')
         labels = labels.to('cuda')
     batch_size = config['batch_size']
@@ -93,13 +96,8 @@ def train_dgl(dataset, config):
     else:
         sampler = DGLNeighborSampler_finegrained([25, 10, 10])
 
-    train_dataloader = DataLoader(g, train_nid, sampler, device='cuda',
-                                  batch_size=batch_size, shuffle=True, pin_prefetcher=True,
-                                  drop_last=False, num_workers=config['num_workers'])
-
-    val_dataloader = DataLoader(g, val_nid, sampler, device='cuda',
-                                batch_size=batch_size, shuffle=True,pin_prefetcher=True,
-                                drop_last=False, num_workers=config['num_workers'])
+    train_dataloader = DataLoader(g, train_nid, sampler, batch_size=batch_size, shuffle=True,  drop_last=False, num_workers=config['num_workers'],device='cuda')
+    val_dataloader = DataLoader(g, val_nid, sampler,batch_size=batch_size, shuffle=True, drop_last=False, num_workers=config['num_workers'],device='cuda')
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
@@ -107,7 +105,7 @@ def train_dgl(dataset, config):
     epoch_list = []
     mem_list = []
     feature_loading_list = []
-    n_epoch = 3
+    n_epoch = config['num_epoch']
     static_memory = torch.cuda.memory_allocated()
     print('memory allocated before training:',
           static_memory / (1024 * 1024 * 1024), 'GB')

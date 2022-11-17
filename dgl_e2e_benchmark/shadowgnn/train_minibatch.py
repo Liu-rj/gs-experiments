@@ -206,7 +206,7 @@ if __name__ == '__main__':
                         help="batch size for training")
     parser.add_argument("--num-workers", type=int, default=0,
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
-    parser.add_argument("--num-epoch", type=int, default=2,
+    parser.add_argument("--num-epoch", type=int, default=3,
                         help="numbers of epoch in training")
     parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained'],
                         help="sample mode")

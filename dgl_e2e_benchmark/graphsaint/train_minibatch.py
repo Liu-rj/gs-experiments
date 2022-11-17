@@ -79,8 +79,11 @@ def train_dgl(dataset, config):
 
     if use_uva:
         features, labels = features.pin_memory(), labels.pin_memory()
+    elif config['device']=='cuda':
+        g, train_nid, val_nid = g.to('cuda'), train_nid.to('cuda'), val_nid.to('cuda')
+        features = features.to('cuda')
+        labels = labels.to('cuda')
     else:
-        g, train_nid, val_nid = g.to(device), train_nid.to(device), val_nid.to(device)
         features = features.to('cuda')
         labels = labels.to('cuda')
     batch_size = config['batch_size']
@@ -92,13 +95,9 @@ def train_dgl(dataset, config):
         sampler = GraphSaintSampler(4)
     else:
         sampler = GraphSaintSampler_finegrained(4)
-    train_dataloader = DataLoader(g, train_nid, sampler,
-                                  batch_size=batch_size, shuffle=True,
-                                  drop_last=False, num_workers=config['num_workers'])
+    train_dataloader = DataLoader(g, train_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
 
-    val_dataloader = DataLoader(g, val_nid, sampler,
-                                batch_size=batch_size, shuffle=True,
-                                drop_last=False, num_workers=config['num_workers'])
+    val_dataloader = DataLoader(g, val_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
@@ -141,7 +140,7 @@ def train_dgl(dataset, config):
                 opt.step()
                 acc = compute_acc(y_hat, y)
                 tq.set_postfix({'loss': '%.06f' % loss.item(),
-                               'acc': '%.03f' % acc.item()})
+                            'acc': '%.03f' % acc.item()})
                 tic = time.time()
 
 
@@ -168,7 +167,7 @@ def train_dgl(dataset, config):
                     val_pred.append(y_pred)
                     val_labels.append(y)
                     tic = time.time()
-           # acc = compute_acc(val_pred,val_labels)
+            # acc = compute_acc(val_pred,val_labels)
 
         torch.cuda.synchronize()
         epoch_list.append(time.time() - start)
