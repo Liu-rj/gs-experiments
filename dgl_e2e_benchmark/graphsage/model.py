@@ -1,10 +1,12 @@
 from sampler import *
 import torch.nn as nn
+import torch.nn.functional as F
 from dgl.nn.pytorch.conv import SAGEConv
 import dgl.function as fn
 from dgl.utils import gather_pinned_tensor_rows
 from dgl.dataloading import DataLoader, MultiLayerFullNeighborSampler
 import tqdm
+
 
 class SAGEMeanAgg(nn.Module):
     def __init__(self, aggregator_type, dropout):
@@ -24,6 +26,7 @@ class SAGEMeanAgg(nn.Module):
             h = torch.add(h_neigh, h_self)
             h = F.relu(h)
             return h
+
 
 class GraphSAGE_DGL(nn.Module):
     def __init__(self, in_size, hid_size, out_size, num_layers, use_uva):
@@ -55,9 +58,9 @@ class GraphSAGE_DGL(nn.Module):
         """Conduct layer-wise inference to get all the node embeddings."""
         sampler = MultiLayerFullNeighborSampler(1)
         dataloader = DataLoader(
-                g, torch.arange(g.num_nodes()).to(g.device), sampler, device=device,
-                batch_size=batch_size, shuffle=False, drop_last=False,
-                num_workers=0)
+            g, torch.arange(g.num_nodes()).to(g.device), sampler, device=device,
+            batch_size=batch_size, shuffle=False, drop_last=False,
+            num_workers=0)
         buffer_device = torch.device('cpu')
         pin_memory = (buffer_device != device)
 
@@ -68,7 +71,7 @@ class GraphSAGE_DGL(nn.Module):
             feat = feat.to(device)
             for input_nodes, output_nodes, blocks in tqdm.tqdm(dataloader):
                 x = feat[input_nodes]
-                h = layer(blocks[0], x) # len(blocks) = 1
+                h = layer(blocks[0], x)  # len(blocks) = 1
                 if l != len(self.layers) - 1:
                     h = F.relu(h)
                     h = self.dropout(h)

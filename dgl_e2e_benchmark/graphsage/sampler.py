@@ -1,12 +1,9 @@
 import torch
-import torch.nn.functional as F
-import torchmetrics.functional as MF
-
+import gs
 import dgl
-from dgl import to_block, create_block
+from dgl import to_block
 from dgl.dataloading import BlockSampler
 import time
-
 
 
 def neighborsampler_dgl(g, seeds, fanout):
@@ -26,6 +23,7 @@ def neighborsampler_dgl(g, seeds, fanout):
     acc_time += time.time() - start
     print(acc_time)
     return blocks
+
 
 class DGLNeighborSampler(BlockSampler):
     def __init__(self, fanouts, edge_dir='in', prob=None, replace=False,
@@ -58,6 +56,7 @@ class DGLNeighborSampler(BlockSampler):
         input_nodes = seed_nodes
         return input_nodes, output_nodes, blocks
 
+
 class DGLNeighborSampler_finegrained(BlockSampler):
     def __init__(self, fanouts, edge_dir='in', prob=None, replace=False,
                  prefetch_node_feats=None, prefetch_labels=None, prefetch_edge_feats=None,
@@ -85,3 +84,29 @@ class DGLNeighborSampler_finegrained(BlockSampler):
         input_nodes = seed_nodes
         self.sample_time += time.time() - start
         return input_nodes, output_nodes, blocks
+
+
+def matrix_sampler_nonfused(A: gs.Matrix, seeds, fanouts):
+    blocks = []
+    output_nodes = seeds
+    for fanout in fanouts:
+        subA = A[:, seeds]
+        subA = subA.columnwise_sampling(fanout, replace=False)
+        block = subA.to_dgl_block()
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, blocks
+
+
+def matrix_sampler_fused(A: gs.Matrix, seeds, fanouts):
+    blocks = []
+    output_nodes = seeds
+    for fanout in fanouts:
+        subA = gs.Matrix(
+            A._graph._CAPI_fused_columnwise_slicing_sampling(seeds, fanout, False))
+        block = subA.to_dgl_block()
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, blocks

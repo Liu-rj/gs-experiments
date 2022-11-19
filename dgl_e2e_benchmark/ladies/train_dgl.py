@@ -24,6 +24,7 @@ def train(dataset, args):
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
     W = normalized_laplacian_edata(g)
+    g = g.formats('csc')
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
         W = W.cuda()
