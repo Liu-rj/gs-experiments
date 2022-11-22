@@ -227,7 +227,7 @@ if __name__ == '__main__':
     feat_device = args.fmode
     # load and preprocess dataset
     print('Loading data')
-    g, features, labels, n_classes, splitted_idx = load_reddit()
+    g, features, labels, n_classes, splitted_idx = load_r()
     print('num of nodes:', g.num_nodes())
     print('num of edges:', g.num_edges())
     g = g.long().to('cuda')

@@ -1,5 +1,6 @@
 from model import *
 from dgl.dataloading import DataLoader, NeighborSampler
+from gs.utils import SeedGenerator,ConvModel
 from dgl.utils import pin_memory_inplace
 from dgl.data import RedditDataset
 from model import *
@@ -12,7 +13,7 @@ from ctypes.util import *
 import numpy as np
 from dgl.data import RedditDataset
 from ogb.nodeproppred import DglNodePropPredDataset
-
+import gs
 
 
 def compute_acc(pred, label):
@@ -185,6 +186,126 @@ def train_dgl(dataset, config):
     print('Average epoch sampling time:', np.mean(sample_list[1:]))
     print('Average epoch end2end time:', np.mean(epoch_list[1:]))
     print('Average epoch gpu mem peak:', np.mean(mem_list[1:]))
+def train_matrix(dataset, config):
+    feat_device=config['feat_device']
+    device = config['device']
+    use_uva = config['use_uva']
+    g, features, labels, n_classes, splitted_idx = dataset
+    train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
+    csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
+    if use_uva and device == 'cpu':
+        features, labels = features.pin_memory(), labels.pin_memory()
+        csc_indptr = csc_indptr.pin_memory()
+        csc_indices = csc_indices.pin_memory()
+        train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
+    else:
+        csc_indptr, csc_indices = csc_indptr.to('cuda'), csc_indices.to('cuda')
+        features, labels = features.to(device), labels.to(device)
+    matrix = gs.Matrix(gs.Graph(False))
+    matrix._graph._CAPI_load_csc(csc_indptr, csc_indices)
+    batch_size = config['batch_size']
+    num_layers = 2
+    model = GraphSAGE_DGL(
+        features.shape[1], 128, n_classes, num_layers, use_uva,dropout=0.1).to('cuda')
+    sampler = GraphSaintSampler_matrix(4)
+    
+    train_seedloader = SeedGenerator(train_nid, batch_size=batch_size, shuffle=True, drop_last=False)
+    
+    val_seedloader = SeedGenerator(val_nid, batch_size=batch_size, shuffle=True, drop_last=False)
+    # train_dataloader = DataLoader(g, train_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
+
+    # val_dataloader = DataLoader(g, val_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
+
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+
+    sample_list = []
+    epoch_list = []
+    mem_list = []
+    feature_loading_list = []
+    n_epoch = config['num_epoch']
+    static_memory = torch.cuda.memory_allocated()
+    print('memory allocated before training:',
+          static_memory / (1024 * 1024 * 1024), 'GB')
+    sampling_time=0
+    for epoch in range(n_epoch):
+        epoch_feature_loading = 0
+        torch.cuda.reset_peak_memory_stats()
+        start = time.time()
+        model.train()
+        tic = time.time()
+        with tqdm.tqdm(train_seedloader) as tq:
+            for step,seeds in enumerate(tq):
+                torch.cuda.synchronize()
+                # print(matrix)
+                # print(seeds)
+                input_nodes,subg=sampler.sample(matrix, seeds)
+                sampling_time+=time.time()-tic
+                temp = time.time()
+                if use_uva:
+                    x= gather_pinned_tensor_rows(
+                            features, input_nodes.to('cuda'))
+                    y = gather_pinned_tensor_rows(labels, input_nodes.to('cuda'))
+                else:
+                    x = features[input_nodes]
+                    y = labels[input_nodes]
+                torch.cuda.synchronize()
+                epoch_feature_loading += time.time() - temp
+                y_hat = model(subg.to('cuda'), x)
+                is_labeled = y == y
+                y = y[is_labeled].long()
+                y_hat = y_hat[is_labeled]
+                loss = F.cross_entropy(y_hat, y)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                acc = compute_acc(y_hat, y)
+                tq.set_postfix({'loss': '%.06f' % loss.item(),
+                            'acc': '%.03f' % acc.item()})
+                tic = time.time()
+
+
+        model.eval()
+        val_pred = []
+        val_labels = []
+        tic = time.time()
+        with torch.no_grad():
+            with tqdm.tqdm(val_seedloader) as tq:
+                for step,seeds in enumerate(tq):
+                    torch.cuda.synchronize()
+                    input_nodes,subg=sampler.sample(matrix, seeds)
+                    temp = time.time()
+                    sampling_time+=time.time()-tic
+                    if use_uva:
+                        x= gather_pinned_tensor_rows(
+                                features, input_nodes.to('cuda'))
+                        y = gather_pinned_tensor_rows(labels, input_nodes.to('cuda'))
+                    else:
+                        x = features[input_nodes]
+                        y = labels[input_nodes]
+                    torch.cuda.synchronize()
+                    epoch_feature_loading += time.time() - temp
+                    y_pred = model(subg.to('cuda'), x)
+                    val_pred.append(y_pred)
+                    val_labels.append(y)
+                    tic = time.time()
+            # acc = compute_acc(val_pred,val_labels)
+
+        torch.cuda.synchronize()
+        epoch_list.append(time.time() - start)
+        mem_list.append((torch.cuda.max_memory_reserved() -
+                        static_memory) / (1024 * 1024 * 1024))
+        sample_list.append(sampling_time)
+        feature_loading_list.append(epoch_feature_loading)
+        sampling_time = 0
+
+        print("Epoch {:05d} | E2E Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch, epoch_list[-1], sample_list[-1], feature_loading_list[-1], mem_list[-1]))
+
+    print('Average epoch feature loading time:',
+          np.mean(feature_loading_list[1:]))
+    print('Average epoch sampling time:', np.mean(sample_list[1:]))
+    print('Average epoch end2end time:', np.mean(epoch_list[1:]))
+    print('Average epoch gpu mem peak:', np.mean(mem_list[1:]))
 
 if __name__ == '__main__':
     config = {
@@ -204,7 +325,7 @@ if __name__ == '__main__':
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
     parser.add_argument("--num-epoch", type=int, default=5,
                         help="numbers of epoch in training")
-    parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained'],
+    parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained','matrix'],
                         help="sample mode")
     args = parser.parse_args()
     config['device'] = args.device
@@ -227,5 +348,8 @@ if __name__ == '__main__':
         config['feat_device'] = 'cpu'
     else:
         config['feat_device'] = 'cuda'
-    train_dgl(dataset, config)
+    if config['sample_mode'] == 'matrix':
+        train_matrix(dataset,config)
+    else:
+        train_dgl(dataset, config)
 

@@ -10,6 +10,19 @@ import argparse
 from load_graph import *
 from model import *
 from sampler import *
+def load_100Mpapers():
+    data = DglNodePropPredDataset(name="ogbn-papers100M",root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
 
 
 def compute_acc(pred, label):
@@ -184,6 +197,6 @@ if __name__ == '__main__':
     elif args.dataset == 'products':
         dataset = load_ogb('ogbn-products')
     elif args.dataset == 'papers100m':
-        dataset = load_ogb('ogbn-papers100M')
+        dataset = load_100Mpapers()
     print(dataset[0])
     train(dataset, args)

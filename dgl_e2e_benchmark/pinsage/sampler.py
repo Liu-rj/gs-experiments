@@ -67,10 +67,14 @@ class NeighborSampler(object):
             for _ in range(num_layers)]
 
     def sample_blocks(self, seeds, heads=None, tails=None, neg_tails=None):
+        torch.cuda.nvtx.range_push("sample blocks")
         blocks = []
         for sampler in self.samplers:
+            torch.cuda.nvtx.range_push("dgl pinasage sampler")
             frontier = sampler(seeds)
+            torch.cuda.nvtx.range_pop()
             if heads is not None:
+                torch.cuda.nvtx.range_push("dgl pinasage remove edge")
                 eids = frontier.edge_ids(torch.cat([heads, heads]), torch.cat(
                     [tails, neg_tails]), return_uv=True)[2]
                 if len(eids) > 0:
@@ -80,12 +84,17 @@ class NeighborSampler(object):
                     # print(frontier)
                     # print(frontier.edata['weights'])
                     #frontier.edata['weights'] = old_frontier.edata['weights'][frontier.edata[dgl.EID]]
+                torch.cuda.nvtx.range_pop()
+            torch.cuda.nvtx.range_push("to block")
             block = compact_and_copy(frontier, seeds)
+            torch.cuda.nvtx.range_pop()
             seeds = block.srcdata[dgl.NID]
             blocks.insert(0, block)
+        torch.cuda.nvtx.range_pop()
         return blocks
 
     def sample_from_item_pairs(self, heads, tails, neg_tails):
+        torch.cuda.nvtx.range_push("sample from item pairs")
         # Create a graph with positive connections only and another graph with negative
         # connections only.
         pos_graph = dgl.graph(
@@ -98,6 +107,7 @@ class NeighborSampler(object):
         seeds = pos_graph.ndata[dgl.NID]
 
         blocks = self.sample_blocks(seeds, heads, tails, neg_tails)
+        torch.cuda.nvtx.range_pop()
         return pos_graph, neg_graph, blocks
 
 
@@ -108,12 +118,15 @@ def assign_simple_node_features(ndata, g, ntype, assign_id=False):
     for col in g.nodes[ntype].data.keys():
         if not assign_id and col == dgl.NID:
             continue
-        induced_nodes = ndata[dgl.NID]
+        induced_nodes = ndata[dgl.NID].to('cpu')
+    #    print("g.device:",g.device)
+    #    print("col:",g.nodes[ntype].data[col].device)
+   #     print("induced nodes:",induced_nodes)
         ndata[col] = g.nodes[ntype].data[col][induced_nodes].to('cuda')
 
 
 def assign_textual_node_features(ndata, features):
-    node_ids = ndata[dgl.NID]
+    node_ids = ndata[dgl.NID].to('cpu')
     for field_name, field in features.items():
         ndata[field_name] = field[node_ids].to('cuda')
 

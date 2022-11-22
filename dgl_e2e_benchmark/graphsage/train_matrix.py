@@ -14,7 +14,19 @@ from sampler import *
 
 def compute_acc(pred, label):
     return (pred.argmax(1) == label).float().mean()
-
+def load_ogbn_products():
+    data = DglNodePropPredDataset(name="ogbn-products", root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
 
 def train(dataset, args):
     device = args.device
@@ -52,7 +64,7 @@ def train(dataset, args):
         features.shape[1], 64, n_classes, len(fanouts), use_uva).to('cuda')
     opt = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    n_epoch = 5
+    n_epoch = 40
 
     sample_time_list = []
     epoch_time = []
@@ -175,7 +187,7 @@ if __name__ == '__main__':
                         help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=1024,
                         help="batch size for training")
-    parser.add_argument("--samples", default='25,10,10',
+    parser.add_argument("--samples", default='10,10,10',
                         help="sample size for each layer")
     parser.add_argument("--num-workers", type=int, default=0,
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
@@ -185,7 +197,7 @@ if __name__ == '__main__':
     if args.dataset == 'reddit':
         dataset = load_reddit()
     elif args.dataset == 'products':
-        dataset = load_ogb('ogbn-products')
+        dataset = load_ogbn_products()
     elif args.dataset == 'papers100m':
         dataset = load_ogb('ogbn-papers100M')
     print(dataset[0])

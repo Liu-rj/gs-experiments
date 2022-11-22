@@ -169,45 +169,49 @@ def train(dataset, args):
         torch.cuda.synchronize()
         tic = time.time()
         for batch_id in tqdm.trange(args.batches_per_epoch):
+            torch.cuda.nvtx.range_push("sampling")
             pos_graph, neg_graph, blocks = next(dataloader_it)
             torch.cuda.synchronize()
+            torch.cuda.nvtx.range_pop()
             sample_time += time.time() - tic
-
+            torch.cuda.nvtx.range_push("feature loading")
             tic = time.time()
             pos_graph, neg_graph = pos_graph.to('cuda'), neg_graph.to('cuda')
             blocks = [block.to('cuda') for block in blocks]
             assign_features_to_blocks(blocks, g, features, item_ntype)
             torch.cuda.synchronize()
+            torch.cuda.nvtx.range_pop()
             epoch_feature_loading += time.time() - tic
-
+            torch.cuda.nvtx.range_push("model train")
             loss = model(pos_graph, neg_graph, blocks).mean()
             opt.zero_grad()
             loss.backward()
             opt.step()
             torch.cuda.synchronize()
+            torch.cuda.nvtx.range_pop()
             tic = time.time()
 
         # Evaluate
-        model.eval()
-        with torch.no_grad():
-            h_item_batches = []
-            torch.cuda.synchronize()
-            tic = time.time()
-            for batch_id, seeds in enumerate(tqdm.tqdm(dataloader_test)):
-                blocks = collator.collate_test(seeds)
-                torch.cuda.synchronize()
-                sample_time += time.time() - tic
+        # model.eval()
+        # with torch.no_grad():
+        #     h_item_batches = []
+        #     torch.cuda.synchronize()
+        #     tic = time.time()
+        #     for batch_id, seeds in enumerate(tqdm.tqdm(dataloader_test)):
+        #         blocks = collator.collate_test(seeds)
+        #         torch.cuda.synchronize()
+        #         sample_time += time.time() - tic
 
-                tic = time.time()
-                blocks = [block.to('cuda') for block in blocks]
-                assign_features_to_blocks(
-                    blocks, g, features, item_ntype)
-                torch.cuda.synchronize()
-                epoch_feature_loading += time.time() - tic
-                h_item_batches.append(model.get_repr(blocks))
-                torch.cuda.synchronize()
-                tic = time.time()
-            h_item = torch.cat(h_item_batches, 0)
+        #         tic = time.time()
+        #         blocks = [block.to('cuda') for block in blocks]
+        #         assign_features_to_blocks(
+        #             blocks, g, features, item_ntype)
+        #         torch.cuda.synchronize()
+        #         epoch_feature_loading += time.time() - tic
+        #         h_item_batches.append(model.get_repr(blocks))
+        #         torch.cuda.synchronize()
+        #         tic = time.time()
+        #     h_item = torch.cat(h_item_batches, 0)
 
             # hit, sampling_time = evaluation.evaluate_nn(
             #     dataset, val_g, h_item, args.k, args.batch_size)
@@ -243,7 +247,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=256)
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--num-epochs', type=int, default=5)
-    parser.add_argument("--batches-per-epoch", type=int, default=500)
+    parser.add_argument("--batches-per-epoch", type=int, default=10)
     parser.add_argument('--num-workers', type=int, default=0)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('-k', type=int, default=10)
@@ -254,7 +258,9 @@ if __name__ == '__main__':
     data_info_path = os.path.join(args.dataset_path, 'data.pkl')
     with open(data_info_path, 'rb') as f:
         dataset = pickle.load(f)
+
     train_g_path = os.path.join(args.dataset_path, 'train_g.bin')
     g_list, _ = dgl.load_graphs(train_g_path)
     dataset['train-graph'] = g_list[0].to(args.device)
+    print(dataset)
     train(dataset, args)

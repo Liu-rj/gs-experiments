@@ -139,7 +139,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     if args.dataset == 'movie':
-        args.n_epochs = 10
+        args.n_epochs = 40
         args.neighbor_sample_size = 4
         args.dim = 32
         args.n_iter = 2

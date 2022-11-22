@@ -35,8 +35,7 @@ class DataLoader:
         df_kg = pd.read_csv(self.cfg[data]['kg_path'], sep='\t', header=None, names=[
                             'head', 'relation', 'tail'])
         df_rating = pd.read_csv(self.cfg[data]['rating_path'], sep=self.cfg[data]['rating_sep'], names=[
-                                'userID', 'itemID', 'rating'], skiprows=1)
-
+                                'userID', 'itemID', 'rating'], skiprows=1,index_col=False)
         # df_rating['itemID'] and df_item2id['item'] both represents old entity ID
         df_rating = df_rating[df_rating['itemID'].isin(df_item2id['item'])]
         df_rating.reset_index(inplace=True, drop=True)
@@ -77,7 +76,6 @@ class DataLoader:
         df_dataset = pd.DataFrame()
         df_dataset['userID'] = self.user_encoder.transform(
             self.df_rating['userID'])
-
         # update to new id
         item2id_dict = dict(
             zip(self.df_item2id['item'], self.df_item2id['id']))
@@ -86,7 +84,7 @@ class DataLoader:
         df_dataset['itemID'] = self.entity_encoder.transform(
             self.df_rating['itemID'])
         df_dataset['label'] = self.df_rating['rating'].apply(
-            lambda x: 0 if x < self.cfg[self.data]['threshold'] else 1)
+            lambda x: 0 if float(x) < float(self.cfg[self.data]['threshold']) else 1)
 
         # negative sampling
         df_dataset = df_dataset[df_dataset['label'] == 1]
