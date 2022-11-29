@@ -5,7 +5,6 @@ from data_loader import DataLoader
 import torch
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score
 from gs.utils import SeedGenerator
 from tqdm import tqdm
 import time
@@ -45,9 +44,9 @@ def train(args):
     # train_dataset = KGCNDataset(x_train)
     # test_dataset = KGCNDataset(x_test)
     train_seedloader = SeedGenerator(
-        torch.tensor(x_train.index), batch_size=args.batch_size, shuffle=True, drop_last=False)
+        torch.tensor(x_train.index, dtype=torch.int64, device=device), batch_size=args.batch_size, shuffle=True, drop_last=False)
     test_seedloader = SeedGenerator(
-        torch.tensor(x_test.index), batch_size=args.batch_size, shuffle=True, drop_last=False)
+        torch.tensor(x_test.index, dtype=torch.int64, device=device), batch_size=args.batch_size, shuffle=True, drop_last=False)
     # train_loader = torch.utils.data.DataLoader(
     #     train_dataset, batch_size=args.batch_size)
     # test_loader = torch.utils.data.DataLoader(
@@ -64,7 +63,6 @@ def train(args):
     # train
     loss_list = []
     test_loss_list = []
-    auc_score_list = []
     time_list = []
     epoch_sample = []
 
@@ -89,24 +87,20 @@ def train(args):
 
         # evaluate per every epoch
         test_loss = 0
-        total_roc = 0
         with torch.no_grad():
             for i, seeds in enumerate(tqdm(test_seedloader)):
                 user_ids, item_ids, batch_labels = userID[seeds], itemID[seeds], labels[seeds]
                 outputs = net(user_ids, item_ids)
                 test_loss += criterion(outputs, batch_labels).item()
-                total_roc += roc_auc_score(batch_labels.cpu().detach().numpy(),
-                                           outputs.cpu().detach().numpy())
         test_loss_list.append(test_loss / len(test_seedloader))
-        auc_score_list.append(total_roc / len(test_seedloader))
 
         torch.cuda.synchronize()
         time_list.append(time.time() - start)
         epoch_sample.append(net.epoch_sample_time)
         net.epoch_sample_time = 0
 
-        print("Epoch {:05d} | Loss {:.4f} | AUC {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch + 1, test_loss / len(test_seedloader), total_roc / len(test_seedloader), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_allocated() /
+        print("Epoch {:05d} | Loss {:.4f} | E2E Time {:.4f} s | Epoch Sampling Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch + 1, test_loss / len(test_seedloader), time_list[-1], epoch_sample[-1], torch.cuda.max_memory_allocated() /
                       (1024 * 1024 * 1024)))
 
     print('Average epoch end2end time:', np.mean(time_list[3:]))
