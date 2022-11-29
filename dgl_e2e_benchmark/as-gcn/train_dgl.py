@@ -34,7 +34,7 @@ def train(dataset, args):
     num_nodes = args['num_nodes']
     model = Model(features.shape[1],
                   args['hidden_dim'], n_classes, len(num_nodes)).to('cuda')
-    sampler = FastGCNSampler(num_nodes, replace=False,
+    sampler = ASGCNSampler(num_nodes, replace=False,
                              use_uva=use_uva, W=model.W_g, eweight=adj_weight)
     train_dataloader = DataLoader(
         g,
@@ -99,7 +99,6 @@ def train(dataset, args):
             opt.zero_grad()
             loss.backward()
             opt.step()
-
             # train_dataloader.set_postfix({'loss': '%.06f' % loss.item(),
             #                 'acc': '%.03f' % acc.item()})
             torch.cuda.synchronize()
