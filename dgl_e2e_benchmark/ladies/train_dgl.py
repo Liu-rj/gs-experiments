@@ -23,18 +23,19 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
-    W = normalized_laplacian_edata(g)
+    # W = normalized_laplacian_edata(g)
+    W = torch.ones(g.num_edges(), dtype=torch.float32, device=g.device)
     g = g.formats('csc')
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        W = W.cuda()
+        W = W.pin_memory()
     else:
         features, labels = features.to(device), labels.to(device)
         W = W.to(device)
 
     num_nodes = args['num_nodes']
     sampler = LADIESSampler(num_nodes, weight='weight',
-                            out_weight='w', replace=False, W=W)
+                            out_weight='w', replace=False, W=W, use_uva=use_uva)
     train_dataloader = DataLoader(
         g,
         train_nid,

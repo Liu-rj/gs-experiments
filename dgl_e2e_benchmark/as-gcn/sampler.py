@@ -7,22 +7,27 @@ import gs
 
 
 class ASGCNSampler(dgl.dataloading.BlockSampler):
-    def __init__(self, fanouts, replace=False, use_uva=False, W=None, eweight=None):
+    def __init__(self, fanouts, replace=False, use_uva=False, W=None, eweight=None, node_feats=None):
         super().__init__()
         self.fanouts = fanouts
         self.replace = replace
         self.use_uva = use_uva
         self.W = W
         self.edge_weight = eweight
+        self.node_feats = node_feats
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         blocks = []
         output_nodes = seed_nodes
-        features = g.ndata['feat']
+        features = self.node_feats
         for fanout in self.fanouts:
             subg = dgl.in_subgraph(g, seed_nodes)
             reversed_subg = dgl.reverse(subg, copy_edata=True)
-            sampled_e_weight = self.edge_weight[reversed_subg.edata[dgl.EID]]
+            if self.use_uva:
+                sampled_e_weight = gather_pinned_tensor_rows(
+                    self.edge_weight, reversed_subg.edata[dgl.EID])
+            else:
+                sampled_e_weight = self.edge_weight[reversed_subg.edata[dgl.EID]]
             p = torch.sqrt(dgl.ops.copy_e_sum(
                 reversed_subg, sampled_e_weight ** 2))
 

@@ -32,7 +32,7 @@ def train(dataset, args):
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
         train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
-        probs = probs.cuda()
+        probs = probs.pin_memory()
     else:
         features, labels = features.to(device), labels.to(device)
         probs = probs.to(device)

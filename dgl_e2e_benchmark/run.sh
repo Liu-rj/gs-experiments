@@ -1,7 +1,5 @@
 #!/bin/bash
-cd ./fastgcn
-./run.sh > outputs/log_new
+cd ./as-gcn
+./run.sh > outputs/log
 cd ../ladies
-./run.sh > outputs/log_new
-cd ../pinsage
-./run.sh > outputs/log_new
+./run.sh > outputs/log

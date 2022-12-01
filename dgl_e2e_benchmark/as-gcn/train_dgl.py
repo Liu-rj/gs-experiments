@@ -22,20 +22,22 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
-    adj_weight = normalized_laplacian_edata(g)
+    # adj_weight = normalized_laplacian_edata(g)
+    adj_weight = torch.ones(
+        g.num_edges(), dtype=torch.float32, device=g.device)
+    g = g.formats('csc')
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        adj_weight = adj_weight.cuda()
+        adj_weight = adj_weight.pin_memory()
     else:
         features, labels = features.to(device), labels.to(device)
         adj_weight = adj_weight.to(device)
-    g.ndata['feat'] = features
 
     num_nodes = args['num_nodes']
     model = Model(features.shape[1],
                   args['hidden_dim'], n_classes, len(num_nodes)).to('cuda')
     sampler = ASGCNSampler(num_nodes, replace=False,
-                             use_uva=use_uva, W=model.W_g, eweight=adj_weight)
+                           use_uva=use_uva, W=model.W_g, eweight=adj_weight, node_feats=features)
     train_dataloader = DataLoader(
         g,
         train_nid,
@@ -58,6 +60,8 @@ def train(dataset, args):
     epoch_time = []
     mem_list = []
     feature_loading_list = []
+    forward_time_list = []
+    backward_time_list = []
     torch.cuda.synchronize()
     static_memory = torch.cuda.memory_allocated()
     print('memory allocated before training:',
@@ -66,6 +70,8 @@ def train(dataset, args):
     for epoch in range(args['num_epochs']):
         epoch_feature_loading = 0
         sample_time = 0
+        forward_time = 0
+        backward_time = 0
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
         start = time.time()
@@ -89,19 +95,24 @@ def train(dataset, args):
             torch.cuda.synchronize()
             epoch_feature_loading += time.time() - tic
 
+            tic = time.time()
             batch_pred, reg_loss = model(blocks, batch_inputs)
             is_labeled = batch_labels == batch_labels
             batch_labels = batch_labels[is_labeled].long()
             batch_pred = batch_pred[is_labeled]
             loss = F.cross_entropy(batch_pred, batch_labels) + 0.5 * reg_loss
+            torch.cuda.synchronize()
+            forward_time += time.time() - tic
             # acc = compute_acc(batch_pred, batch_labels)
 
+            tic = time.time()
             opt.zero_grad()
             loss.backward()
             opt.step()
+            torch.cuda.synchronize()
+            backward_time += time.time() - tic
             # train_dataloader.set_postfix({'loss': '%.06f' % loss.item(),
             #                 'acc': '%.03f' % acc.item()})
-            torch.cuda.synchronize()
             tic = time.time()
 
         model.eval()
@@ -126,13 +137,15 @@ def train(dataset, args):
                 torch.cuda.synchronize()
                 epoch_feature_loading += time.time() - tic
 
+                tic = time.time()
                 batch_pred, reg_loss = model(blocks, batch_inputs)
                 is_labeled = batch_labels == batch_labels
                 batch_labels = batch_labels[is_labeled].long()
                 batch_pred = batch_pred[is_labeled]
+                torch.cuda.synchronize()
+                forward_time += time.time() - tic
                 val_pred.append(batch_pred)
                 val_labels.append(batch_labels)
-                torch.cuda.synchronize()
                 tic = time.time()
 
         acc = compute_acc(torch.cat(val_pred, 0),
@@ -144,11 +157,15 @@ def train(dataset, args):
         mem_list.append((torch.cuda.max_memory_allocated() -
                         static_memory) / (1024 * 1024 * 1024))
         feature_loading_list.append(epoch_feature_loading)
+        forward_time_list.append(forward_time)
+        backward_time_list.append(backward_time)
 
-        print("Epoch {:05d} | Val Acc {:.4f} | E2E Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, acc, epoch_time[-1], time_list[-1], feature_loading_list[-1], mem_list[-1]))
+        print("Epoch {:05d} | Val Acc {:.4f} | E2E Time {:.4f} s | Forward Time {:.4f} s | Backward Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+              .format(epoch, acc, epoch_time[-1], forward_time_list[-1], backward_time_list[-1], time_list[-1], feature_loading_list[-1], mem_list[-1]))
 
     print('Average epoch end2end time:', np.mean(epoch_time[2:]))
+    print('Average epoch forward time:', np.mean(forward_time_list[2:]))
+    print('Average epoch backward time:', np.mean(backward_time_list[2:]))
     print('Average epoch sampling time:', np.mean(time_list[2:]))
     print('Average epoch feature loading time:',
           np.mean(feature_loading_list[2:]))
