@@ -6,7 +6,7 @@ import numpy as np
 import gs
 
 
-class FastGCNSampler(dgl.dataloading.BlockSampler):
+class ASGCNSampler(dgl.dataloading.BlockSampler):
     def __init__(self, fanouts, replace=False, use_uva=False, W=None, eweight=None):
         super().__init__()
         self.fanouts = fanouts
@@ -25,7 +25,7 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
             sampled_e_weight = self.edge_weight[reversed_subg.edata[dgl.EID]]
             p = torch.sqrt(dgl.ops.copy_e_sum(
                 reversed_subg, sampled_e_weight ** 2))
-            
+
             edges = subg.edges()
             nodes = torch.unique(edges[0])
             num_pick = np.min([nodes.numel(), fanout])
@@ -46,7 +46,7 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
             idx = torch.multinomial(q, num_pick, replacement=False)
             selected = nodes[idx]
             subg = dgl.out_subgraph(subg, selected)
-            
+
             q_allnodes = torch.empty(
                 subg.num_nodes(), dtype=torch.float32, device=subg.device)
             h_u_allnodes = torch.empty(
@@ -56,7 +56,7 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
             q_allnodes[selected] = q[idx]
             h_u_allnodes[selected] = h_u[idx]
             h_v_allnodes[seed_nodes] = h_v
-            
+
             W_tilde = dgl.ops.u_add_v(
                 subg, h_u_allnodes, h_v_allnodes)
             W_tilde = (relu(W_tilde) + 1) / num_pick
@@ -65,6 +65,7 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
             # reversed copy_e_sum
             reversed_subg = dgl.reverse(subg, copy_edata=True)
             u_sum = dgl.ops.copy_e_sum(reversed_subg, W_tilde)
+
             block = dgl.to_block(subg, seed_nodes)
             block.edata['w'] = W_tilde[block.edata[dgl.EID]]
             block.srcdata['u_sum'] = u_sum[block.srcdata[dgl.NID]]
@@ -79,7 +80,7 @@ def asgcn_matrix_sampler(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
     blocks = []
     for fanout in fanouts:
         subA = A[:, seeds]
-        p = subA.sum(axis=0, powk=2).sqrt()
+        p = subA.sum(axis=1, powk=2).sqrt()
         row_indices = subA.row_ids()
         if use_uva:
             node_feats_u = gather_pinned_tensor_rows(features, row_indices)
@@ -92,16 +93,24 @@ def asgcn_matrix_sampler(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
         h_v_sum = torch.sum(h_v)
         attention = torch.flatten((relu(h_u + h_v_sum) + 1) / fanout)
         g_u = torch.flatten(relu(h_u) + 1)
-        
+
         q = normalize(p[row_indices] * attention * g_u, p=1.0, dim=0)
 
         selected, idx = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, q, fanout, False)
 
         subA = subA[selected, :]
-        subA = subA.multiply(h_v, axis=0).multiply(h_u, axis=1)
-        subA = subA.divide()
+        W_tilde = gs.ops.u_add_v(subA, h_u[idx], h_v)
+        W_tilde = (relu(W_tilde) + 1) / selected.numel()
+        W_tilde = gs.ops.e_div_u(subA, W_tilde, q[idx])
+        subA.set_data(W_tilde * subA.get_data())
+        u_sum = subA.sum(axis=1)
+        u_all = torch.zeros(
+            A.get_num_rows(), dtype=torch.float32, device='cuda')
+        u_all[selected] = u_sum
+
         block = subA.to_dgl_block()
+        block.srcdata['u_sum'] = u_all[block.srcdata['_ID']]
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
     input_nodes = seeds

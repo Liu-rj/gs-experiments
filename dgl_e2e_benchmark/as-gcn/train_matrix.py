@@ -71,7 +71,6 @@ def train(dataset, args):
         start = time.time()
 
         model.train()
-        total_loss = 0
         torch.cuda.synchronize()
         tic = time.time()
         for it, seeds in enumerate(tqdm.tqdm(train_seedloader)):
@@ -93,15 +92,15 @@ def train(dataset, args):
             torch.cuda.synchronize()
             epoch_feature_loading += time.time() - tic
 
-            batch_pred = model(blocks, batch_inputs)
+            batch_pred, reg_loss = model(blocks, batch_inputs)
             is_labeled = batch_labels == batch_labels
             batch_labels = batch_labels[is_labeled].long()
             batch_pred = batch_pred[is_labeled]
-            loss = F.cross_entropy(batch_pred, batch_labels)
+            loss = F.cross_entropy(batch_pred, batch_labels) + 0.5 * reg_loss
+
             opt.zero_grad()
             loss.backward()
             opt.step()
-            total_loss += loss.item()
             torch.cuda.synchronize()
             tic = time.time()
 
@@ -130,7 +129,7 @@ def train(dataset, args):
                 torch.cuda.synchronize()
                 epoch_feature_loading += time.time() - tic
 
-                batch_pred = model(blocks, batch_inputs)
+                batch_pred, reg_loss = model(blocks, batch_inputs)
                 is_labeled = batch_labels == batch_labels
                 batch_labels = batch_labels[is_labeled].long()
                 batch_pred = batch_pred[is_labeled]
