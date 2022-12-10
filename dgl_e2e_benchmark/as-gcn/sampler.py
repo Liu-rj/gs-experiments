@@ -81,12 +81,22 @@ class ASGCNSampler(dgl.dataloading.BlockSampler):
 
 
 def asgcn_matrix_sampler(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
+    # torch.cuda.nvtx.range_push('matrix sampler')
     output_nodes = seeds
     blocks = []
     for fanout in fanouts:
+        # torch.cuda.nvtx.range_push('col slice')
         subA = A[:, seeds]
-        p = subA.sum(axis=1, powk=2).sqrt()
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('row sum')
+        p = subA.sum(axis=1, powk=2)
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('sqrt')
+        p = p.sqrt()
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('valid row id')
         row_indices = subA.row_ids()
+        # torch.cuda.nvtx.range_pop()
         if use_uva:
             node_feats_u = gather_pinned_tensor_rows(features, row_indices)
             node_feats_v = gather_pinned_tensor_rows(features, seeds)
@@ -101,15 +111,25 @@ def asgcn_matrix_sampler(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
 
         q = normalize(p[row_indices] * attention * g_u, p=1.0, dim=0)
 
+        # torch.cuda.nvtx.range_push('sample')
         selected, idx = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, q, fanout, False)
+        # torch.cuda.nvtx.range_pop()
 
+        # torch.cuda.nvtx.range_push('row slice')
         subA = subA[selected, :]
+        # torch.cuda.nvtx.range_pop()
+        # torch.cuda.nvtx.range_push('u add v')
         W_tilde = gs.ops.u_add_v(subA, h_u[idx], h_v)
+        # torch.cuda.nvtx.range_pop()
         W_tilde = (relu(W_tilde) + 1) / selected.numel()
+        # torch.cuda.nvtx.range_push('e div u')
         W_tilde = gs.ops.e_div_u(subA, W_tilde, q[idx])
+        # torch.cuda.nvtx.range_pop()
         subA.set_data(W_tilde * subA.get_data())
+        # torch.cuda.nvtx.range_push('row sum')
         u_sum = subA.sum(axis=1)
+        # torch.cuda.nvtx.range_pop()
         u_all = torch.zeros(
             A.get_num_rows(), dtype=torch.float32, device='cuda')
         u_all[selected] = u_sum
@@ -119,4 +139,5 @@ def asgcn_matrix_sampler(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
     input_nodes = seeds
+    # torch.cuda.nvtx.range_pop()
     return input_nodes, output_nodes, blocks

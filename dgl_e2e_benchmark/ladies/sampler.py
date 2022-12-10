@@ -31,7 +31,8 @@ class LADIESSampler(dgl.dataloading.BlockSampler):
             # torch.cuda.nvtx.range_push('row sum')
             reversed_subg = dgl.reverse(subg, copy_edata=True)
             if self.use_uva:
-                weight = gather_pinned_tensor_rows(self.W, reversed_subg.edata[dgl.EID])
+                weight = gather_pinned_tensor_rows(
+                    self.W, reversed_subg.edata[dgl.EID])
             else:
                 weight = self.W[reversed_subg.edata[dgl.EID]]
             probs = dgl.ops.copy_e_sum(reversed_subg, weight ** 2)

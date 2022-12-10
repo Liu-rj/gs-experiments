@@ -25,34 +25,26 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
-    # adj_weight = normalized_laplacian_edata(g)
-    adj_weight = torch.ones(
-        g.num_edges(), dtype=torch.float32, device=g.device)
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
-    adj_weight = adj_weight[edge_ids]
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
         train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
-        adj_weight = adj_weight.pin_memory()
     else:
         features, labels = features.to(device), labels.to(device)
-        adj_weight = adj_weight.to(device)
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_set_data(adj_weight)
+    del g
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
-    # compiled_func = gs.jit.compile(
-    #     func=fastgcn_sampler, args=(m, torch.Tensor(), fanouts))
-    # compiled_func.gm = dce(slicing_and_sampling_fuse(compiled_func.gm))
-    compiled_func = asgcn_matrix_sampler
+    compiled_func = matrix_sampler
     train_seedloader = SeedGenerator(
         train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(
         val_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
-    model = Model(features.shape[1], 64, n_classes, len(fanouts)).to('cuda')
+    model = SAGEModel(features.shape[1], 64,
+                      n_classes, len(fanouts), 0.0).to('cuda')
     opt = torch.optim.Adam(model.parameters(), lr=0.001)
 
     n_epoch = 5
@@ -77,12 +69,14 @@ def train(dataset, args):
         start = time.time()
 
         model.train()
+        total_train_loss = 0
+        total_sample_loss = 0
         torch.cuda.synchronize()
         tic = time.time()
         for it, seeds in enumerate(tqdm.tqdm(train_seedloader)):
             seeds = seeds.to('cuda')
-            input_nodes, output_nodes, blocks = compiled_func(
-                m, seeds, features, model.W_g, fanouts, use_uva)
+            input_nodes, output_nodes, blocks, loss_tuple = compiled_func(
+                m, seeds, fanouts, features, model.sample_W, model.sample_W2, model.sample_a, use_uva)
             torch.cuda.synchronize()
             sample_time += time.time() - tic
 
@@ -99,7 +93,7 @@ def train(dataset, args):
             epoch_feature_loading += time.time() - tic
 
             tic = time.time()
-            batch_pred, reg_loss = model(blocks, batch_inputs)
+            batch_pred = model(blocks, batch_inputs)
             is_labeled = batch_labels == batch_labels
             batch_labels = batch_labels[is_labeled].long()
             batch_pred = batch_pred[is_labeled]
@@ -107,10 +101,19 @@ def train(dataset, args):
             forward_time += time.time() - tic
 
             tic = time.time()
-            loss = F.cross_entropy(batch_pred, batch_labels) + 0.5 * reg_loss
             opt.zero_grad()
-            loss.backward()
+            train_loss = F.cross_entropy(batch_pred, batch_labels)
+            train_loss.backward()
+            # Loss for sampling probability function
+            # Gradient of intermediate tensor
+            chain_grad = model.X1.grad
+            # Compute intermediate loss for sampling probability parameters
+            sample_loss = sampler_loss(
+                loss_tuple, chain_grad.detach(), features, use_uva)
+            sample_loss.backward()
             opt.step()
+            total_train_loss += train_loss.item()
+            total_sample_loss += sample_loss.item()
             torch.cuda.synchronize()
             backward_time += time.time() - tic
             tic = time.time()
@@ -123,8 +126,8 @@ def train(dataset, args):
             tic = time.time()
             for it, seeds in enumerate(tqdm.tqdm(val_seedloader)):
                 seeds = seeds.to('cuda')
-                input_nodes, output_nodes, blocks = compiled_func(
-                    m, seeds, features, model.W_g, fanouts, use_uva)
+                input_nodes, output_nodes, blocks, _ = compiled_func(
+                    m, seeds, fanouts, features, model.sample_W, model.sample_W2, model.sample_a, use_uva)
                 torch.cuda.synchronize()
                 sample_time += time.time() - tic
 
@@ -141,7 +144,7 @@ def train(dataset, args):
                 epoch_feature_loading += time.time() - tic
 
                 tic = time.time()
-                batch_pred, reg_loss = model(blocks, batch_inputs)
+                batch_pred = model(blocks, batch_inputs)
                 is_labeled = batch_labels == batch_labels
                 batch_labels = batch_labels[is_labeled].long()
                 batch_pred = batch_pred[is_labeled]
@@ -188,9 +191,9 @@ if __name__ == '__main__':
                         help="Wether to use UVA to sample graph and load feature")
     parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m'],
                         help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=256,
+    parser.add_argument("--batchsize", type=int, default=512,
                         help="batch size for training")
-    parser.add_argument("--samples", default='2000,2000',
+    parser.add_argument("--samples", default='10,10',
                         help="sample size for each layer")
     parser.add_argument("--num-workers", type=int, default=0,
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
