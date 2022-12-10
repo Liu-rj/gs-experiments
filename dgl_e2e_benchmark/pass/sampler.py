@@ -43,8 +43,8 @@ class DGLNeighborSampler(BlockSampler):
                 (subg.num_nodes(), self.W_2.shape[1]), dtype=torch.float32, device='cuda')
             v_feats_all_w2 = torch.empty(
                 (subg.num_nodes(), self.W_2.shape[1]), dtype=torch.float32, device='cuda')
-            u_feats_all_w2[nodes] = u_feats @ self.W_1
-            v_feats_all_w2[seed_nodes] = v_feats @ self.W_1
+            u_feats_all_w2[nodes] = u_feats @ self.W_2
+            v_feats_all_w2[seed_nodes] = v_feats @ self.W_2
 
             att1 = torch.sum(dgl.ops.u_mul_v(subg, u_feats_all_w1,
                                              v_feats_all_w1), dim=1).unsqueeze(1)
@@ -75,12 +75,14 @@ def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, u
     ret_loss_tuple = None
     for fanout in fanouts:
         subA = A[:, seeds]
+        neighbors = subA.row_ids()
+        subA = subA[neighbors, :]
 
         if use_uva:
-            u_feats = gather_pinned_tensor_rows(features, subA.row_ids())
+            u_feats = gather_pinned_tensor_rows(features, neighbors)
             v_feats = gather_pinned_tensor_rows(features, seeds)
         else:
-            u_feats = features[subA.row_ids()]
+            u_feats = features[neighbors]
             v_feats = features[seeds]
 
         att1 = torch.sum(gs.ops.u_mul_v(subA, u_feats @ W_1,
