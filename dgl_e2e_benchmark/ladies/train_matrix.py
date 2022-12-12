@@ -25,19 +25,19 @@ def train(dataset, args):
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     g, train_nid, val_nid = g.to(device), train_nid.to(
         device), val_nid.to(device)
-    weight = normalized_laplacian_edata(g)
+    # weight = normalized_laplacian_edata(g)
+    weight = torch.ones(g.num_edges(), dtype=torch.float32, device=g.device)
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
     weight = weight[edge_ids]
-    probs = g.out_degrees().float()
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
         train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
-        weight, probs = weight.cuda(), probs.cuda()
+        weight = weight.pin_memory()
     else:
         features, labels = features.to(device), labels.to(device)
-        weight, probs = weight.to(device), probs.to(device)
+        weight = weight.to(device)
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
     m._graph._CAPI_set_data(weight)

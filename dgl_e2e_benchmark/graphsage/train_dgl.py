@@ -281,7 +281,6 @@ def train_dgl(dataset, config):
                 tq.set_postfix({'loss': '%.06f' % loss.item(),'acc': '%.03f' % acc.item()})
                 torch.cuda.synchronize()
                 tic = time.time()
-
         # model.eval()
         # val_pred = []
         # val_labels = []
@@ -309,6 +308,7 @@ def train_dgl(dataset, config):
         #             val_labels.append(y)
         #             tic = time.time()
         #acc = compute_acc(val_pred,val_labels)
+
 
         torch.cuda.synchronize()
         epoch_list.append(time.time() - start)

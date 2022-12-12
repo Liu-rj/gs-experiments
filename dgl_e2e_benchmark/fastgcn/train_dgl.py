@@ -66,7 +66,7 @@ def train(dataset, args):
     g = g.formats('csc')
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
-        probs = probs.cuda()
+        probs = probs.pin_memory()
     else:
         features, labels = features.to(device), labels.to(device)
         probs = probs.to(device)

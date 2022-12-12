@@ -42,18 +42,12 @@ class GraphSAGE_DGL(nn.Module):
         self.out_size = out_size
         self.use_uva = use_uva
 
-    def forward(self, blocks, x):
-        h = x.to('cuda')
+    def forward(self, blocks, h):
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
-            block = block.to('cuda')
-            # print("block:",block)
-            # print("h:",h.shape)
             h = layer(block, h)
             if l != len(self.layers) - 1:
                 h = F.relu(h)
                 h = self.dropout(h)
-        # dgl.dataloading.base.set_node_lazy_features(sg, None)
-        # dgl.dataloading.base.set_edge_lazy_features(sg, None)
         return h
 
     def inference(self, g, device, batch_size, feat):
