@@ -4,12 +4,52 @@ from dgl.dataloading import DataLoader
 import tqdm
 from model import *
 from sampler import *
-from load_graph import *
 import argparse
 from dgl.utils import gather_pinned_tensor_rows
 import time
+from dgl.data import RedditDataset
+from ogb.nodeproppred import DglNodePropPredDataset
+def load_reddit():
+    data = RedditDataset(self_loop=True)
+    g = data[0]
+    n_classes = data.num_classes
+    train_nid = torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0]
+    test_nid = torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
+    feat = g.ndata['feat']
+    labels = g.ndata['label']
+    g.ndata.clear()
+    return g, feat, labels, n_classes, splitted_idx
 
-
+def load_ogbn_products():
+    data = DglNodePropPredDataset(name="ogbn-products", root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
+    
+def load_100Mpapers():
+    data = DglNodePropPredDataset(name="ogbn-papers100M",root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
+    
 def compute_acc(pred, label):
     return (pred.argmax(1) == label).float().mean()
 
@@ -63,7 +103,7 @@ def train(dataset, args):
     print('memory allocated before training:',
           static_memory / (1024 * 1024 * 1024), 'GB')
 
-    for epoch in range(args['num_epochs']):
+    for epoch in range(args['num_epoch']):
         epoch_feature_loading = 0
         sample_time = 0
         torch.cuda.reset_peak_memory_stats()
@@ -158,7 +198,6 @@ def train(dataset, args):
 
 if __name__ == '__main__':
     config = {
-        'num_epochs': 5,
         'hidden_dim': 64}
 
     parser = argparse.ArgumentParser()
@@ -174,20 +213,24 @@ if __name__ == '__main__':
                         help="sample size for each layer")
     parser.add_argument("--num-workers", type=int, default=0,
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
+    parser.add_argument("--num-epoch", type=int, default=6,
+                        help="numbers of epoch in training")
     args = parser.parse_args()
+
     config['device'] = args.device
     config['use_uva'] = args.use_uva
     config['dataset'] = args.dataset
     config['batch_size'] = args.batchsize
     config['num_nodes'] = [int(x.strip()) for x in args.samples.split(',')]
     config['num_workers'] = args.num_workers
+    config['num_epoch']=args.num_epoch
     print(config)
 
     if args.dataset == 'reddit':
         dataset = load_reddit()
     elif args.dataset == 'products':
-        dataset = load_ogb('ogbn-products')
+        dataset = load_ogbn_products()
     elif args.dataset == 'papers100m':
-        dataset = load_ogb('ogbn-papers100M')
+        dataset = load_100Mpapers()
     print(dataset[0])
     train(dataset, config)

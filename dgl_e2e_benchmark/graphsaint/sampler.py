@@ -19,11 +19,17 @@ class GraphSaintSampler(object):
         self.sampling_time = 0
         self.walk_length = walk_length
     def sample(self, g, seeds,exclude_eids=None):
+        torch.cuda.nvtx.range_push('dgl random walk')
         traces, types = dgl.sampling.random_walk(g, nodes=seeds, length=self.walk_length)
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push('dgl transform and unique')
         sampled_nodes = traces.view(traces.numel())
         sampled_nodes = sampled_nodes[sampled_nodes !=-1]
         sampled_nodes = torch.unique(sampled_nodes, sorted=False)
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push('dgl subgraph')
         sg = g.subgraph(sampled_nodes, relabel_nodes=True)
+        torch.cuda.nvtx.range_pop()
         return sg.ndata['_ID'],sg
 
 class GraphSaintSampler_finegrained(object):
@@ -51,12 +57,20 @@ class GraphSaintSampler_matrix(object):
         self.sampling_time = 0
         self.walk_length = walk_length
     def sample(self,A: gs.Matrix, seeds):
+      #  torch.cuda.nvtx.range_push('matrix random walk')
         paths = A.random_walk(seeds, self.walk_length)
+       # torch.cuda.nvtx.range_pop()
+       # torch.cuda.nvtx.range_push('matrix transform and unique')
         node_ids = paths.view(paths.numel())
         node_ids = node_ids[node_ids!=-1]
         out = torch.unique(node_ids, sorted=False)
-        induced_subA = A[out, out]
+       # torch.cuda.nvtx.range_pop()
+       # torch.cuda.nvtx.range_push('matrix subgraph')
+        induced_subA = gs.Matrix(A._graph._CAPI_fusion_slicing(out))
+       # torch.cuda.nvtx.range_pop()
+       # torch.cuda.nvtx.range_push('matrix to dgl graph')
         subA = create_dgl_graph(induced_subA)
+       # torch.cuda.nvtx.range_pop()
         return out,subA
 class GraphSaintSampler_matrix_nonfused(object):
     def __init__(self, walk_length=4, use_uva=False):

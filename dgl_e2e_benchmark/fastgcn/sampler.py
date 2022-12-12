@@ -20,7 +20,7 @@ class FastGCNSampler(dgl.dataloading.BlockSampler):
             nodes = torch.unique(edges[0])
             num_pick = np.min([nodes.shape[0], fanout])
             node_probs = self.probs[nodes]
-            idx = torch.multinomial(node_probs, num_pick, replacement=False)
+            idx = (node_probs, num_pick, replacement=False)
             selected = nodes[idx]
             subg = dgl.out_subgraph(subg, selected)
             block = dgl.to_block(subg, seed_nodes)

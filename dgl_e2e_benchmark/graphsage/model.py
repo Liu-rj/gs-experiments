@@ -46,6 +46,8 @@ class GraphSAGE_DGL(nn.Module):
         h = x.to('cuda')
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
             block = block.to('cuda')
+            # print("block:",block)
+            # print("h:",h.shape)
             h = layer(block, h)
             if l != len(self.layers) - 1:
                 h = F.relu(h)
