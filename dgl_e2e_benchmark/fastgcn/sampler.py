@@ -103,7 +103,7 @@ def fastgcn_matrix_sampler_with_format_selection_coo_full(A: gs.Matrix, seeds, p
         selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, node_probs, fanout, False)
         subg = subg._CAPI_full_slicing(selected, 1, _CSR)
-        block = gs.Matrix(subg).to_dgl_block(seeds)
+        block = gs.Matrix(subg).full_to_dgl_block(seeds)
         seeds = block.srcdata['_ID']
         ret.insert(0, block)
     input_nodes = seeds

@@ -237,3 +237,56 @@ def asgcn_matrix_sampler_with_format_selection_coo(A: gs.Matrix, seeds, features
         blocks.insert(0, block)
     input_nodes = seeds
     return input_nodes, output_nodes, blocks
+
+
+def asgcn_matrix_sampler_with_format_selection_coo_full(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
+    graph = A._graph
+    output_nodes = seeds
+    blocks = []
+    for fanout in fanouts:
+        subg = graph._CAPI_full_slicing(seeds, 0, _CSC)
+        p = subg._CAPI_full_sum(1, 2, _CSR)
+        p = p.sqrt()
+        row_indices = subg._CAPI_get_valid_rows()
+        if use_uva:
+            node_feats_u = gather_pinned_tensor_rows(features, row_indices)
+            node_feats_v = gather_pinned_tensor_rows(features, seeds)
+        else:
+            node_feats_u = features[row_indices]
+            node_feats_v = features[seeds]
+        h_u = node_feats_u @ W[:, 0]
+        h_v = node_feats_v @ W[:, 1]
+        h_v_sum = torch.sum(h_v)
+        attention = torch.flatten((relu(h_u + h_v_sum) + 1) / fanout)
+        g_u = torch.flatten(relu(h_u) + 1)
+
+        q = normalize(p[row_indices] * attention * g_u, p=1.0, dim=0)
+
+        selected, idx = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, q, fanout, False)
+
+        q_allnodes = torch.empty(
+            subg._CAPI_full_get_num_nodes(), dtype=torch.float32, device='cuda')
+        h_u_allnodes = torch.empty(
+            subg._CAPI_full_get_num_nodes(), dtype=torch.float32, device='cuda')
+        h_v_allnodes = torch.empty(
+            subg._CAPI_full_get_num_nodes(), dtype=torch.float32, device='cuda')
+        q_allnodes[selected] = q[idx]
+        h_u_allnodes[selected] = h_u[idx]
+        h_v_allnodes[seeds] = h_v
+
+        subg = subg._CAPI_full_slicing(selected, 1, _CSR)
+        W_tilde = gs.ops.u_add_v(
+            gs.Matrix(subg), h_u_allnodes, h_v_allnodes, _COO)
+        W_tilde = (relu(W_tilde) + 1) / selected.numel()
+        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q_allnodes, _CSR)
+        subg._CAPI_set_data(
+            W_tilde * subg._CAPI_get_data('default'), 'default')
+        u_sum_all = subg._CAPI_sum(1, 1, _CSR)
+
+        block = gs.Matrix(subg).full_to_dgl_block(seeds)
+        block.srcdata['u_sum'] = u_sum_all[block.srcdata['_ID']]
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, blocks
