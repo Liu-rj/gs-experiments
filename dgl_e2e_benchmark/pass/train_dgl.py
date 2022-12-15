@@ -12,7 +12,74 @@ import numpy as np
 from load_graph import *
 import torch.nn.functional as F
 
+def load_reddit():
+    data = RedditDataset(self_loop=True)
+    g = data[0]
+    n_classes = data.num_classes
+    train_nid = torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0]
+    test_nid = torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
+    feat = g.ndata['feat']
+    labels = g.ndata['label']
+    g.ndata.clear()
+    return g, feat, labels, n_classes, splitted_idx
 
+
+def load_ogbn_products():
+    data = DglNodePropPredDataset(name="ogbn-products",root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
+
+def load_100Mpapers():
+    data = DglNodePropPredDataset(name="ogbn-papers100M",root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
+
+def load_friendster():
+    bin_path = "/mzydata/data/friendster_coo_with_feature_large.bin"
+    g_list, _ = dgl.load_graphs(bin_path)
+    g = g_list[0]
+    print("graph loaded")
+    train_nid = torch.nonzero(g.ndata["train_mask"].long(), as_tuple=True)[0]
+    test_nid = torch.nonzero(g.ndata["test_mask"].long(), as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"].long(), as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
+    g=g.long()
+    features = np.random.rand(g.num_nodes(), 64)
+    labels = np.random.randint(0, 2, size=g.num_nodes())
+    feat = torch.tensor(features, dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.int64)
+    n_classes = 2
+    g.ndata.clear()
+    g.edata.clear()
+    print("adding self loop...")
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    splitted_idx = dict()
+    splitted_idx['train'] = train_nid
+    splitted_idx['valid']=val_nid
+    splitted_idx['test']=test_nid
+    print(g)
+    return g, feat, labels, n_classes, splitted_idx
 def compute_acc(pred, label):
     return (pred.argmax(1) == label).float().mean()
 
@@ -40,9 +107,9 @@ def train_dgl(dataset, config):
     sampler = DGLNeighborSampler(
         fanouts, model.sample_W, model.sample_W2, model.sample_a, use_uva, features=features)
     train_dataloader = DataLoader(g, train_nid, sampler, batch_size=batch_size,
-                                  shuffle=True,  drop_last=False, num_workers=config['num_workers'], device='cuda')
-    val_dataloader = DataLoader(g, val_nid, sampler, batch_size=batch_size, shuffle=True,
-                                drop_last=False, num_workers=config['num_workers'], device='cuda')
+                                  shuffle=False,  drop_last=True, num_workers=config['num_workers'], device='cuda')
+    val_dataloader = DataLoader(g, val_nid, sampler, batch_size=batch_size, shuffle=False,
+                                drop_last=True, num_workers=config['num_workers'], device='cuda')
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
@@ -67,6 +134,7 @@ def train_dgl(dataset, config):
         tic = time.time()
         with tqdm.tqdm(train_dataloader) as tq:
             for step, (input_nodes, output_nodes, blocks) in enumerate(tq):
+              #  print("step ",step,": ,seeds:",output_nodes)
                 output_nodes = output_nodes.to('cuda')
                 torch.cuda.synchronize()
                 sampling_time += time.time() - tic
@@ -155,14 +223,17 @@ def train_dgl(dataset, config):
           np.mean(feature_loading_list[1:]))
     print('Average epoch sampling time:', np.mean(sample_list[1:]))
     print('Average epoch end2end time:', np.mean(epoch_list[1:]))
-    print('Average epoch forward time:', np.mean(forward_time_list[2:]))
-    print('Average epoch backward time:', np.mean(backward_time_list[2:]))
+    print('Average epoch forward time:', np.mean(forward_time_list[1:]))
+    print('Average epoch backward time:', np.mean(backward_time_list[1:]))
     print('Average epoch gpu mem peak:', np.mean(mem_list[1:]))
 
-
+def setup_seed(seed):
+     torch.manual_seed(seed)
+     torch.cuda.manual_seed_all(seed)
+     torch.backends.cudnn.deterministic = True
 if __name__ == '__main__':
     config = {}
-
+    setup_seed(1)
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default='cuda', choices=['cuda', 'cpu'],
                         help="Training model on gpu or cpu")
@@ -188,9 +259,9 @@ if __name__ == '__main__':
     if args.dataset == 'reddit':
         dataset = load_reddit()
     elif args.dataset == 'products':
-        dataset = load_ogb('ogbn-products')
+        dataset = load_ogbn_products()
     elif args.dataset == 'papers100m':
-        dataset = load_ogb('ogbn-papers100M')
+        dataset = load_100Mpapers()
     print(dataset[0])
     if args.device != 'cuda':
         config['feat_device'] = 'cpu'

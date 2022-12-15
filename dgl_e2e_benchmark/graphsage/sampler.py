@@ -121,32 +121,43 @@ class DGLNeighborSampler_finegrained(BlockSampler):
         return input_nodes, output_nodes, blocks
 
 
-def matrix_sampler_nonfused(A: gs.Matrix, seeds, fanouts):
+# def matrix_sampler_nonfused(A: gs.Matrix, seeds, fanouts):
+#     blocks = []
+#     output_nodes = seeds
+#     torch.cuda.nvtx.range_push('nonfused matrix graphsage sampling')
+#     for fanout in fanouts:
+#         torch.cuda.nvtx.range_push('matrix slicing')
+#         subA = A[:, seeds]
+#         # print("memory allocated after slicing:",torch.cuda.memory_allocated()/(1024*1024*1024))  
+#         # print("memory reserved after slicing:",torch.cuda.memory_reserved()/(1024*1024*1024))
+#         torch.cuda.nvtx.range_pop()
+#         torch.cuda.nvtx.range_push('matrix colwise sampling')
+#         subA = subA.columnwise_sampling(fanout, replace=False)
+#         torch.cuda.nvtx.range_pop()
+#         # print("memory allocated after sampling:",torch.cuda.memory_allocated()/(1024*1024*1024)) 
+#         # print("memory reserved after sampling:",torch.cuda.memory_reserved()/(1024*1024*1024))
+#         torch.cuda.nvtx.range_push('to dgl block')
+#         block = subA.to_dgl_block()
+#         torch.cuda.nvtx.range_pop()
+#         # print("memory allocated after to_dgl_block:",torch.cuda.memory_allocated()/(1024*1024*1024)) 
+#         # print("memory reserved after to_dgl_block:",torch.cuda.memory_reserved()/(1024*1024*1024))
+#         seeds = block.srcdata['_ID']
+#         blocks.insert(0, block)
+#     torch.cuda.nvtx.range_pop()
+#     input_nodes = seeds
+#     return input_nodes, output_nodes, blocks
+
+def matrix_sampler_nonfused(A: gs.Matrix, seeds: torch.Tensor, fanouts: List):
+    output_node = seeds
     blocks = []
-    output_nodes = seeds
-    torch.cuda.nvtx.range_push('nonfused matrix graphsage sampling')
     for fanout in fanouts:
-        torch.cuda.nvtx.range_push('matrix slicing')
-        subA = A[:, seeds]
-        # print("memory allocated after slicing:",torch.cuda.memory_allocated()/(1024*1024*1024))  
-        # print("memory reserved after slicing:",torch.cuda.memory_reserved()/(1024*1024*1024))
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push('matrix colwise sampling')
-        subA = subA.columnwise_sampling(fanout, replace=False)
-        torch.cuda.nvtx.range_pop()
-        # print("memory allocated after sampling:",torch.cuda.memory_allocated()/(1024*1024*1024)) 
-        # print("memory reserved after sampling:",torch.cuda.memory_reserved()/(1024*1024*1024))
-        torch.cuda.nvtx.range_push('to dgl block')
-        block = subA.to_dgl_block()
-        torch.cuda.nvtx.range_pop()
-        # print("memory allocated after to_dgl_block:",torch.cuda.memory_allocated()/(1024*1024*1024)) 
-        # print("memory reserved after to_dgl_block:",torch.cuda.memory_reserved()/(1024*1024*1024))
+        subg =   A._graph._CAPI_slicing(seeds, 0,CSC, CSC);
+        subA = gs.Matrix(subg._CAPI_sampling(0,fanout,False,CSC,CSC))
+        block = to_dgl_block(subA)
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
-    torch.cuda.nvtx.range_pop()
-    input_nodes = seeds
-    return input_nodes, output_nodes, blocks
-
+    input_node = seeds
+    return input_node, output_node, blocks
 
 def matrix_sampler_fused(A: gs.Matrix, seeds, fanouts):
     blocks = []

@@ -11,7 +11,6 @@ import os
 from ctypes import *
 from ctypes.util import *
 import numpy as np
-from dgl.data import RedditDataset
 from ogb.nodeproppred import DglNodePropPredDataset
 import gs
 
@@ -61,6 +60,33 @@ def load_100Mpapers():
     g = dgl.add_self_loop(g)
     return g, feat, labels, n_classes, splitted_idx
 
+def load_friendster():
+    bin_path = "/mzydata/data/friendster_coo_with_feature_large.bin"
+    g_list, _ = dgl.load_graphs(bin_path)
+    g = g_list[0]
+    print("graph loaded")
+    train_nid = torch.nonzero(g.ndata["train_mask"].long(), as_tuple=True)[0]
+    test_nid = torch.nonzero(g.ndata["test_mask"].long(), as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"].long(), as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
+    g=g.long()
+    features = np.random.rand(g.num_nodes(), 64)
+    labels = np.random.randint(0, 2, size=g.num_nodes())
+    feat = torch.tensor(features, dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.int64)
+    n_classes = 2
+    g.ndata.clear()
+    g.edata.clear()
+    print("adding self loop...")
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    splitted_idx = dict()
+    splitted_idx['train'] = train_nid
+    splitted_idx['valid']=val_nid
+    splitted_idx['test']=test_nid
+    print(g)
+    return g, feat, labels, n_classes, splitted_idx
+
 def layerwise_infer(graph, nid, model, batch_size, feat, label):
     model.eval()
     with torch.no_grad():
@@ -72,7 +98,6 @@ def layerwise_infer(graph, nid, model, batch_size, feat, label):
 
 
 def train_dgl(dataset, config):
-    feat_device=config['feat_device']
     device = config['device']
     use_uva = config['use_uva']
     g, features, labels, n_classes, splitted_idx = dataset
@@ -96,9 +121,9 @@ def train_dgl(dataset, config):
         sampler = GraphSaintSampler(4)
     else:
         sampler = GraphSaintSampler_finegrained(4)
-    train_dataloader = DataLoader(g, train_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
+    train_dataloader = DataLoader(g, train_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=False,drop_last=False, num_workers=config['num_workers'],device='cuda',use_uva=use_uva)
 
-    val_dataloader = DataLoader(g, val_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
+    val_dataloader = DataLoader(g, val_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=False,drop_last=False, num_workers=config['num_workers'],device='cuda',use_uva=use_uva)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
@@ -145,29 +170,29 @@ def train_dgl(dataset, config):
                 tic = time.time()
 
 
-        model.eval()
-        val_pred = []
-        val_labels = []
-        tic = time.time()
-        with torch.no_grad():
-            with tqdm.tqdm(val_dataloader) as tq:
-                for it, (input_nodes, subg) in enumerate(tq):
-                    torch.cuda.synchronize()
-                    temp = time.time()
-                    sampling_time+=time.time()-tic
-                    if use_uva:
-                        x= gather_pinned_tensor_rows(
-                                features, input_nodes.to('cuda'))
-                        y = gather_pinned_tensor_rows(labels, input_nodes.to('cuda'))
-                    else:
-                        x = features[input_nodes]
-                        y = labels[input_nodes]
-                    torch.cuda.synchronize()
-                    epoch_feature_loading += time.time() - temp
-                    y_pred = model(subg.to('cuda'), x)
-                    val_pred.append(y_pred)
-                    val_labels.append(y)
-                    tic = time.time()
+        # model.eval()
+        # val_pred = []
+        # val_labels = []
+        # tic = time.time()
+        # with torch.no_grad():
+        #     with tqdm.tqdm(val_dataloader) as tq:
+        #         for it, (input_nodes, subg) in enumerate(tq):
+        #             torch.cuda.synchronize()
+        #             temp = time.time()
+        #             sampling_time+=time.time()-tic
+        #             if use_uva:
+        #                 x= gather_pinned_tensor_rows(
+        #                         features, input_nodes.to('cuda'))
+        #                 y = gather_pinned_tensor_rows(labels, input_nodes.to('cuda'))
+        #             else:
+        #                 x = features[input_nodes]
+        #                 y = labels[input_nodes]
+        #             torch.cuda.synchronize()
+        #             epoch_feature_loading += time.time() - temp
+        #             y_pred = model(subg.to('cuda'), x)
+        #             val_pred.append(y_pred)
+        #             val_labels.append(y)
+        #             tic = time.time()
             # acc = compute_acc(val_pred,val_labels)
 
         torch.cuda.synchronize()
@@ -187,31 +212,37 @@ def train_dgl(dataset, config):
     print('Average epoch end2end time:', np.mean(epoch_list[1:]))
     print('Average epoch gpu mem peak:', np.mean(mem_list[1:]))
 def train_matrix(dataset, config):
-    feat_device=config['feat_device']
     device = config['device']
     use_uva = config['use_uva']
     g, features, labels, n_classes, splitted_idx = dataset
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
-    if use_uva and device == 'cpu':
+    if use_uva:
         features, labels = features.pin_memory(), labels.pin_memory()
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
         train_nid, val_nid = train_nid.pin_memory(), val_nid.pin_memory()
     else:
         csc_indptr, csc_indices = csc_indptr.to('cuda'), csc_indices.to('cuda')
-        features, labels = features.to(device), labels.to(device)
+        features, labels = features.to('cuda'), labels.to('cuda')
     matrix = gs.Matrix(gs.Graph(False))
     matrix._graph._CAPI_load_csc(csc_indptr, csc_indices)
+    print("matrix csc_indptr:",csc_indptr.device)
+    print("matrix csc_indices",csc_indices.device)
     batch_size = config['batch_size']
     num_layers = 2
     model = GraphSAGE_DGL(
         features.shape[1], 128, n_classes, num_layers, use_uva,dropout=0.1).to('cuda')
-    sampler = GraphSaintSampler_matrix(4)
+    if config['sample_mode']=='matrix-fused':
+        sampler = GraphSaintSampler_matrix(4)
+    else:
+        sampler = GraphSaintSampler_matrix_nonfused(4)
+
+    del g
+    del edge_ids
+    train_seedloader = SeedGenerator(train_nid, batch_size=batch_size, shuffle=False, drop_last=False)
     
-    train_seedloader = SeedGenerator(train_nid, batch_size=batch_size, shuffle=True, drop_last=False)
-    
-    val_seedloader = SeedGenerator(val_nid, batch_size=batch_size, shuffle=True, drop_last=False)
+    val_seedloader = SeedGenerator(val_nid, batch_size=batch_size, shuffle=False, drop_last=False)
     # train_dataloader = DataLoader(g, train_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
 
     # val_dataloader = DataLoader(g, val_nid, sampler,batch_size=batch_size, use_prefetch_thread=False,shuffle=True,drop_last=False, num_workers=config['num_workers'],device='cuda')
@@ -264,30 +295,30 @@ def train_matrix(dataset, config):
                 tic = time.time()
 
 
-        model.eval()
-        val_pred = []
-        val_labels = []
-        tic = time.time()
-        with torch.no_grad():
-            with tqdm.tqdm(val_seedloader) as tq:
-                for step,seeds in enumerate(tq):
-                    torch.cuda.synchronize()
-                    input_nodes,subg=sampler.sample(matrix, seeds)
-                    temp = time.time()
-                    sampling_time+=time.time()-tic
-                    if use_uva:
-                        x= gather_pinned_tensor_rows(
-                                features, input_nodes.to('cuda'))
-                        y = gather_pinned_tensor_rows(labels, input_nodes.to('cuda'))
-                    else:
-                        x = features[input_nodes]
-                        y = labels[input_nodes]
-                    torch.cuda.synchronize()
-                    epoch_feature_loading += time.time() - temp
-                    y_pred = model(subg.to('cuda'), x)
-                    val_pred.append(y_pred)
-                    val_labels.append(y)
-                    tic = time.time()
+        # model.eval()
+        # val_pred = []
+        # val_labels = []
+        # tic = time.time()
+        # with torch.no_grad():
+        #     with tqdm.tqdm(val_seedloader) as tq:
+        #         for step,seeds in enumerate(tq):
+        #             torch.cuda.synchronize()
+        #             input_nodes,subg=sampler.sample(matrix, seeds)
+        #             temp = time.time()
+        #             sampling_time+=time.time()-tic
+        #             if use_uva:
+        #                 x= gather_pinned_tensor_rows(
+        #                         features, input_nodes.to('cuda'))
+        #                 y = gather_pinned_tensor_rows(labels, input_nodes.to('cuda'))
+        #             else:
+        #                 x = features[input_nodes]
+        #                 y = labels[input_nodes]
+        #             torch.cuda.synchronize()
+        #             epoch_feature_loading += time.time() - temp
+        #             y_pred = model(subg.to('cuda'), x)
+        #             val_pred.append(y_pred)
+        #             val_labels.append(y)
+        #             tic = time.time()
             # acc = compute_acc(val_pred,val_labels)
 
         torch.cuda.synchronize()
@@ -317,7 +348,7 @@ if __name__ == '__main__':
                         help="Training model on gpu or cpu")
     parser.add_argument('--use-uva', action=argparse.BooleanOptionalAction,
                         help="Wether to use UVA to sample graph and load feature")
-    parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m'],
+    parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m','friendster'],
                         help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=2000,
                         help="batch size for training")
@@ -325,7 +356,7 @@ if __name__ == '__main__':
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
     parser.add_argument("--num-epoch", type=int, default=5,
                         help="numbers of epoch in training")
-    parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained','matrix'],
+    parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained','matrix-fused','matrix-nonfused'],
                         help="sample mode")
     args = parser.parse_args()
     config['device'] = args.device
@@ -343,13 +374,26 @@ if __name__ == '__main__':
         dataset = load_ogbn_products()
     elif args.dataset == 'papers100m':
         dataset = load_100Mpapers()
+    elif args.dataset == 'friendster':
+        dataset = load_friendster()
     print(dataset[0])
     if args.device != 'cuda':
         config['feat_device'] = 'cpu'
     else:
         config['feat_device'] = 'cuda'
-    if config['sample_mode'] == 'matrix':
+    if config['sample_mode'] == 'matrix-fused' or config['sample_mode']=='matrix-nonfused':
         train_matrix(dataset,config)
     else:
         train_dgl(dataset, config)
+
+    config['sample_mode']='ad-hoc'
+    print(config)
+    train_dgl(dataset, config)
+    config['sample_mode']='matrix-fused'
+    print(config)
+    train_matrix(dataset,config)
+    config['sample_mode']='matrix-nonfused'
+    print(config)
+    train_matrix(dataset,config)
+
 

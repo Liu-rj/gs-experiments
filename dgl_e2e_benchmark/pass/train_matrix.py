@@ -11,7 +11,74 @@ from load_graph import *
 from model import *
 from sampler import *
 
+def load_reddit():
+    data = RedditDataset(self_loop=True)
+    g = data[0]
+    n_classes = data.num_classes
+    train_nid = torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0]
+    test_nid = torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
+    feat = g.ndata['feat']
+    labels = g.ndata['label']
+    g.ndata.clear()
+    return g, feat, labels, n_classes, splitted_idx
 
+
+def load_ogbn_products():
+    data = DglNodePropPredDataset(name="ogbn-products",root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
+
+def load_100Mpapers():
+    data = DglNodePropPredDataset(name="ogbn-papers100M",root="/home/ubuntu/.dgl")
+    splitted_idx = data.get_idx_split()
+    g, labels = data[0]
+    g=g.long()
+    feat = g.ndata['feat']
+    labels = labels[:, 0]
+    n_classes = len(
+        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    g.ndata.clear()
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    return g, feat, labels, n_classes, splitted_idx
+
+def load_friendster():
+    bin_path = "/mzydata/data/friendster_coo_with_feature_large.bin"
+    g_list, _ = dgl.load_graphs(bin_path)
+    g = g_list[0]
+    print("graph loaded")
+    train_nid = torch.nonzero(g.ndata["train_mask"].long(), as_tuple=True)[0]
+    test_nid = torch.nonzero(g.ndata["test_mask"].long(), as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"].long(), as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
+    g=g.long()
+    features = np.random.rand(g.num_nodes(), 64)
+    labels = np.random.randint(0, 2, size=g.num_nodes())
+    feat = torch.tensor(features, dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.int64)
+    n_classes = 2
+    g.ndata.clear()
+    g.edata.clear()
+    print("adding self loop...")
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    splitted_idx = dict()
+    splitted_idx['train'] = train_nid
+    splitted_idx['valid']=val_nid
+    splitted_idx['test']=test_nid
+    print(g)
+    return g, feat, labels, n_classes, splitted_idx
 def compute_acc(pred, label):
     return (pred.argmax(1) == label).float().mean()
 
@@ -40,14 +107,14 @@ def train(dataset, args):
 
     compiled_func = matrix_sampler
     train_seedloader = SeedGenerator(
-        train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
+        train_nid, batch_size=args.batchsize, shuffle=False, drop_last=True)
     val_seedloader = SeedGenerator(
-        val_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
+        val_nid, batch_size=args.batchsize, shuffle=False, drop_last=True)
     model = SAGEModel(features.shape[1], 64,
                       n_classes, len(fanouts), 0.0).to('cuda')
     opt = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    n_epoch = 5
+    n_epoch = 1
 
     sample_time_list = []
     epoch_time = []
@@ -77,6 +144,7 @@ def train(dataset, args):
             seeds = seeds.to('cuda')
             input_nodes, output_nodes, blocks, loss_tuple = compiled_func(
                 m, seeds, fanouts, features, model.sample_W, model.sample_W2, model.sample_a, use_uva)
+            print("input_nodes:",input_nodes.numel())
             torch.cuda.synchronize()
             sample_time += time.time() - tic
 
@@ -169,22 +237,26 @@ def train(dataset, args):
         print("Epoch {:05d} | Val Acc {:.4f} | E2E Time {:.4f} s | Forward Time {:.4f} s | Backward Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
               .format(epoch, acc, epoch_time[-1], forward_time_list[-1], backward_time_list[-1], sample_time_list[-1], feature_loading_list[-1], mem_list[-1]))
 
-    print('Average epoch end2end time:', np.mean(epoch_time[2:]))
-    print('Average epoch forward time:', np.mean(forward_time_list[2:]))
-    print('Average epoch backward time:', np.mean(backward_time_list[2:]))
-    print('Average epoch sampling time:', np.mean(sample_time_list[2:]))
+    print('Average epoch end2end time:', np.mean(epoch_time[0:]))
+    print('Average epoch forward time:', np.mean(forward_time_list[0:]))
+    print('Average epoch backward time:', np.mean(backward_time_list[0:]))
+    print('Average epoch sampling time:', np.mean(sample_time_list[0:]))
     print('Average epoch feature loading time:',
-          np.mean(feature_loading_list[2:]))
-    print('Average epoch gpu mem peak:', np.mean(mem_list[2:]))
+          np.mean(feature_loading_list[0:]))
+    print('Average epoch gpu mem peak:', np.mean(mem_list[0:]))
 
     # print('Testing...')
     # acc = layerwise_infer(g, test_nid, model,
     #                       batch_size=4096, feat=features, label=labels)
     # print("Test Accuracy {:.4f}".format(acc.item()))
 
-
+def setup_seed(seed):
+     torch.manual_seed(seed)
+     torch.cuda.manual_seed_all(seed)
+     torch.backends.cudnn.deterministic = True
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    setup_seed(1)
     parser.add_argument("--device", default='cuda', choices=['cuda', 'cpu'],
                         help="Training model on gpu or cpu")
     parser.add_argument('--use-uva', action=argparse.BooleanOptionalAction,
@@ -203,8 +275,8 @@ if __name__ == '__main__':
     if args.dataset == 'reddit':
         dataset = load_reddit()
     elif args.dataset == 'products':
-        dataset = load_ogb('ogbn-products')
+        dataset = load_ogbn_products()
     elif args.dataset == 'papers100m':
-        dataset = load_ogb('ogbn-papers100M')
+        dataset = load_100Mpapers()
     print(dataset[0])
     train(dataset, args)

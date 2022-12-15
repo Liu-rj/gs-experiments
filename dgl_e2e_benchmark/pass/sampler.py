@@ -5,7 +5,9 @@ import dgl
 from dgl import to_block
 from dgl.dataloading import BlockSampler
 from dgl.utils import gather_pinned_tensor_rows
-
+COO = 1
+CSC = 2
+CSR = 4
 
 class DGLNeighborSampler(BlockSampler):
     def __init__(self, fanouts, W_1, W_2, sample_a, use_uva, edge_dir='in', features=None):
@@ -22,82 +24,121 @@ class DGLNeighborSampler(BlockSampler):
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         output_nodes = seed_nodes
         blocks = []
+        torch.cuda.nvtx.range_push('dgl sampling')
         for fanout in reversed(self.fanouts):
+            torch.cuda.nvtx.range_push('dgl in subgraph')
             subg = dgl.in_subgraph(g, seed_nodes)
+            torch.cuda.nvtx.range_pop()
+            torch.cuda.nvtx.range_push('dgl get edges')
             edges = subg.edges()
+            torch.cuda.nvtx.range_pop()
+            torch.cuda.nvtx.range_push('torch unique get src nodes')
             nodes = torch.unique(edges[0])
+            torch.cuda.nvtx.range_pop()
 
             if self.use_uva:
                 u_feats = gather_pinned_tensor_rows(self.features, nodes)
                 v_feats = gather_pinned_tensor_rows(self.features, seed_nodes)
             else:
+                torch.cuda.nvtx.range_push('dgl get u features')
                 u_feats = self.features[nodes]
+                torch.cuda.nvtx.range_pop()
+                torch.cuda.nvtx.range_push('dgl get v features')
                 v_feats = self.features[seed_nodes]
+                torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push('dgl calculate att1') 
+            torch.cuda.nvtx.range_push('dgl sddmm att1') 
             u_feats_all_w1 = torch.empty(
                 (subg.num_nodes(), self.W_1.shape[1]), dtype=torch.float32, device='cuda')
             v_feats_all_w1 = torch.empty(
                 (subg.num_nodes(), self.W_1.shape[1]), dtype=torch.float32, device='cuda')
             u_feats_all_w1[nodes] = u_feats @ self.W_1
             v_feats_all_w1[seed_nodes] = v_feats @ self.W_1
+            res1 = dgl.ops.u_mul_v(subg, u_feats_all_w1,
+                                             v_feats_all_w1)
+            torch.cuda.nvtx.range_pop()
+            torch.cuda.nvtx.range_push('dgl torch sum') 
+            att1 = torch.sum(res1, dim=1).unsqueeze(1)
+         #   torch.cuda.nvtx.range_pop()
+         #   torch.cuda.nvtx.range_pop()
+
+         #   torch.cuda.nvtx.range_push('dgl calculate att2') 
+         #   torch.cuda.nvtx.range_push('dgl sddmm att2') 
             u_feats_all_w2 = torch.empty(
                 (subg.num_nodes(), self.W_2.shape[1]), dtype=torch.float32, device='cuda')
             v_feats_all_w2 = torch.empty(
                 (subg.num_nodes(), self.W_2.shape[1]), dtype=torch.float32, device='cuda')
             u_feats_all_w2[nodes] = u_feats @ self.W_2
             v_feats_all_w2[seed_nodes] = v_feats @ self.W_2
-
-            att1 = torch.sum(dgl.ops.u_mul_v(subg, u_feats_all_w1,
-                                             v_feats_all_w1), dim=1).unsqueeze(1)
-            att2 = torch.sum(dgl.ops.u_mul_v(subg, u_feats_all_w2,
-                                             v_feats_all_w2), dim=1).unsqueeze(1)
+            res2 = dgl.ops.u_mul_v(subg, u_feats_all_w2,
+                                             v_feats_all_w2)
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl torch sum') 
+            att2 = torch.sum(res2, dim=1).unsqueeze(1)
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl calculate att3') 
             subg.ndata['v'] = subg.in_degrees()
             subg.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
             att3 = subg.edata['w'].unsqueeze(1)
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl calculate total att') 
             att = torch.cat([att1, att2, att3], dim=1)
             att = F.relu(att @ F.softmax(self.sample_a, dim=0))
             att = att + 10e-10 * torch.ones_like(att)
-
+        #   torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl biased sampling') 
             frontier = dgl.sampling.sample_neighbors(
                 subg, seed_nodes, fanout, prob=att, replace=True)
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl transform to csc') 
             csc_indptr, csc_indices, edge_ids = frontier.adj_sparse('csc')
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl calculate ret loss') 
             self.ret_loss_tuple = (att[frontier.edata[dgl.EID]][edge_ids],
                                    csc_indices, seed_nodes.numel(), fanout)
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl to block')
             block = to_block(frontier, seed_nodes)
+        #    torch.cuda.nvtx.range_pop()
+        #    torch.cuda.nvtx.range_push('dgl get src nodes')
             seed_nodes = block.srcdata[dgl.NID]
+       #     torch.cuda.nvtx.range_pop()
             blocks.insert(0, block)
         input_nodes = seed_nodes
+      #  torch.cuda.nvtx.range_pop()
         return input_nodes, output_nodes, blocks
-
 
 def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, use_uva):
     blocks = []
     output_nodes = seeds
     ret_loss_tuple = None
     for fanout in fanouts:
-        subA = A[:, seeds]
-        neighbors = subA.row_ids()
-        subA = subA[neighbors, :]
-
+        subg = A._graph._CAPI_slicing(seeds,0,CSC,CSC)
+        neighbors = subg._CAPI_get_valid_rows()
+        subg = subg._CAPI_slicing(neighbors,1,CSC,CSC)
+        subA = gs.Matrix(subg)
         if use_uva:
             u_feats = gather_pinned_tensor_rows(features, neighbors)
             v_feats = gather_pinned_tensor_rows(features, seeds)
         else:
             u_feats = features[neighbors]
             v_feats = features[seeds]
-
-        att1 = torch.sum(gs.ops.u_mul_v(subA, u_feats @ W_1,
-                         v_feats @ W_1), dim=1).unsqueeze(1)
-        att2 = torch.sum(gs.ops.u_mul_v(subA, u_feats @ W_2,
-                         v_feats @ W_2), dim=1).unsqueeze(1)
-        att3 = subA.normalize(axis=0).get_data().unsqueeze(1)
+        res1 = gs.ops.u_mul_v(subA, u_feats @ W_1,
+                         v_feats @ W_1, COO)
+        att1 = torch.sum(res1, dim=1).unsqueeze(1)
+        res2 = gs.ops.u_mul_v(subA, u_feats @ W_2,
+                         v_feats @ W_2, COO)
+        att2 = torch.sum(res2, dim=1).unsqueeze(1)
+        att3 = subA._graph._CAPI_normalize(0,CSC)._CAPI_get_data("default").unsqueeze(1)
         att = torch.cat([att1, att2, att3], dim=1)
         att = F.relu(att @ F.softmax(sample_a, dim=0))
         att = att + 10e-10 * torch.ones_like(att)
         subA.set_data(att)
-
-        subA = subA.columnwise_sampling(fanout, replace=True, bias=att)
-        ret_loss_tuple = (subA.get_data(order='col'),
-                          subA.row_indices(), seeds.numel(), fanout)
+        subg = subA._graph._CAPI_sampling_with_probs(0,att,fanout, True, CSC,CSC)
+        subA = gs.Matrix(subg)
+        ret_loss_tuple = (subA.get_data(order='col'),subA._graph._CAPI_get_coo_rows(True), seeds.numel(), fanout)
         block = subA.to_dgl_block()
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
