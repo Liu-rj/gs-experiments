@@ -147,3 +147,28 @@ def ladies_matrix_sampler_with_format_selection_coo(P: gs.Matrix, seeds, fanouts
         ret.insert(0, block)
     input_node = seeds
     return input_node, output_node, ret
+
+
+def ladies_matrix_sampler_with_format_selection_coo_full(P: gs.Matrix, seeds, fanouts):
+    graph = P._graph
+    output_node = seeds
+    ret = []
+    for fanout in fanouts:
+        print('brefore slicing: reach here')
+        subg = graph._CAPI_full_slicing(seeds, 0, _CSC)
+        print('after slicing: reach here')
+        probs = subg._CAPI_full_sum(1, 2, _CSR)
+        print('after full sum: reach here')
+        row_nodes = subg._CAPI_get_valid_rows()
+        node_probs = probs[row_nodes]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_nodes, node_probs, fanout, False)
+        nodes = torch.cat((seeds, selected)).unique()  # add self-loop
+        subg = subg._CAPI_full_slicing(nodes, 1, _CSR)
+        subg = subg._CAPI_full_divide(probs, 1, _CSR)
+        subg = subg._CAPI_full_normalize(0, _CSC)
+        block = gs.Matrix(subg).to_dgl_block(seeds)
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_node = seeds
+    return input_node, output_node, ret

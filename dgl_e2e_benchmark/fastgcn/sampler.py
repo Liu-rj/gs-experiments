@@ -90,3 +90,21 @@ def fastgcn_matrix_sampler_with_format_selection_coo(A: gs.Matrix, seeds, probs,
         ret.insert(0, block)
     input_nodes = seeds
     return input_nodes, output_nodes, ret
+
+
+def fastgcn_matrix_sampler_with_format_selection_coo_full(A: gs.Matrix, seeds, probs, fanouts):
+    graph = A._graph
+    output_nodes = seeds
+    ret = []
+    for fanout in fanouts:
+        subg = graph._CAPI_full_slicing(seeds, 0, _CSC)
+        row_indices = subg._CAPI_get_valid_rows()
+        node_probs = probs[row_indices]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, node_probs, fanout, False)
+        subg = subg._CAPI_full_slicing(selected, 1, _CSR)
+        block = gs.Matrix(subg).to_dgl_block(seeds)
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, ret

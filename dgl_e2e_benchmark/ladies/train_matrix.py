@@ -10,6 +10,10 @@ import argparse
 from load_graph import *
 from model import *
 from sampler import *
+import os
+
+
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 def compute_acc(pred, label):
@@ -39,7 +43,8 @@ def train(dataset, args):
         features, labels = features.to(device), labels.to(device)
         weight = weight.to(device)
     m = gs.Matrix(gs.Graph(False))
-    m._graph._CAPI_load_csc(csc_indptr, csc_indices)
+    # m._graph._CAPI_load_csc(csc_indptr, csc_indices)
+    m._graph._CAPI_full_load_csc(csc_indptr, csc_indices)
     m._graph._CAPI_set_data(weight, 'col')
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
@@ -47,7 +52,7 @@ def train(dataset, args):
     # compiled_func = gs.jit.compile(
     #     func=fastgcn_sampler, args=(m, torch.Tensor(), fanouts))
     # compiled_func.gm = dce(slicing_and_sampling_fuse(compiled_func.gm))
-    compiled_func = ladies_matrix_sampler_with_format_selection_best
+    compiled_func = ladies_matrix_sampler_with_format_selection_coo_full
     train_seedloader = SeedGenerator(
         train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(
