@@ -154,7 +154,7 @@ def asgcn_matrix_sampler_with_format_selection_best(A: gs.Matrix, seeds, feature
     output_nodes = seeds
     blocks = []
     for fanout in fanouts:
-        subg = graph._CAPI_slicing(seeds, 0, _CSC, _CSC)
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
         p = subg._CAPI_sum(1, 2, _COO)
         p = p.sqrt()
         row_indices = subg._CAPI_get_valid_rows()

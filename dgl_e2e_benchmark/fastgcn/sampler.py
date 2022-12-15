@@ -61,12 +61,12 @@ def fastgcn_matrix_sampler_with_format_selection_best(A: gs.Matrix, seeds, probs
     output_nodes = seeds
     ret = []
     for fanout in fanouts:
-        subg = graph._CAPI_slicing(seeds, 0, _CSC, _CSC)
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
         row_indices = subg._CAPI_get_valid_rows()
         node_probs = probs[row_indices]
         selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, node_probs, fanout, False)
-        subg = subg._CAPI_slicing(selected, 1, _CSC, _CSC)
+        subg = subg._CAPI_slicing(selected, 1, _COO, _COO)
         block = gs.Matrix(subg).to_dgl_block()
         seeds = block.srcdata['_ID']
         ret.insert(0, block)
@@ -84,7 +84,7 @@ def fastgcn_matrix_sampler_with_format_selection_coo(A: gs.Matrix, seeds, probs,
         node_probs = probs[row_indices]
         selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, node_probs, fanout, False)
-        subg = subg._CAPI_slicing(selected, 1, _CSC, _COO)
+        subg = subg._CAPI_slicing(selected, 1, _CSR, _COO)
         block = gs.Matrix(subg).to_dgl_block()
         seeds = block.srcdata['_ID']
         ret.insert(0, block)

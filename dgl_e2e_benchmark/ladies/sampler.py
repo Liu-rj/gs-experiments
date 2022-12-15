@@ -110,7 +110,7 @@ def ladies_matrix_sampler_with_format_selection_best(P: gs.Matrix, seeds, fanout
     output_node = seeds
     ret = []
     for fanout in fanouts:
-        subg = graph._CAPI_slicing(seeds, 0, _CSC, _CSC)
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
         probs = subg._CAPI_sum(1, 2, _COO)
         row_nodes = subg._CAPI_get_valid_rows()
         node_probs = probs[row_nodes]
