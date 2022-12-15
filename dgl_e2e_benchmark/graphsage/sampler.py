@@ -5,6 +5,10 @@ from dgl import to_block
 from dgl.dataloading import BlockSampler
 import time
 
+_CSR = 4
+_CSC = 2
+_COO = 1
+
 
 def neighborsampler_dgl(g, seeds, fanout):
     seed_nodes = seeds
@@ -110,3 +114,16 @@ def matrix_sampler_fused(A: gs.Matrix, seeds, fanouts):
         blocks.insert(0, block)
     input_nodes = seeds
     return input_nodes, output_nodes, blocks
+
+
+def matrix_sampler_nonfused_coo_full(A: gs.Matrix, seeds: torch.Tensor, fanouts):
+    output_node = seeds
+    blocks = []
+    for fanout in fanouts:
+        subg = A._graph._CAPI_full_slicing(seeds, 0, _CSC)
+        subg = subg._CAPI_full_sampling(0, fanout, False, _CSC)
+        block = gs.Matrix(subg).full_to_dgl_block(seeds)
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_node = seeds
+    return input_node, output_node, blocks

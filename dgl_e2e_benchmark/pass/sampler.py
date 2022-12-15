@@ -6,6 +6,10 @@ from dgl import to_block
 from dgl.dataloading import BlockSampler
 from dgl.utils import gather_pinned_tensor_rows
 
+_CSR = 4
+_CSC = 2
+_COO = 1
+
 
 class DGLNeighborSampler(BlockSampler):
     def __init__(self, fanouts, W_1, W_2, sample_a, use_uva, edge_dir='in', features=None):
@@ -99,6 +103,61 @@ def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, u
         ret_loss_tuple = (subA.get_data(order='col'),
                           subA.row_indices(), seeds.numel(), fanout)
         block = subA.to_dgl_block()
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, blocks, ret_loss_tuple
+
+
+def matrix_sampler_coo_full(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, use_uva):
+    blocks = []
+    output_nodes = seeds
+    ret_loss_tuple = None
+    for fanout in fanouts:
+        subg = A._graph._CAPI_full_slicing(seeds, 0, _CSC)
+        neighbors = subg._CAPI_get_valid_rows()
+        subg = subg._CAPI_full_slicing(neighbors, 1, _CSC)
+        subA = gs.Matrix(subg)
+        if use_uva:
+            u_feats = gather_pinned_tensor_rows(features, neighbors)
+            v_feats = gather_pinned_tensor_rows(features, seeds)
+        else:
+            u_feats = features[neighbors]
+            v_feats = features[seeds]
+
+        u_feats_all_w1 = torch.empty(
+            (subg._CAPI_full_get_num_nodes(), W_1.shape[1]), dtype=torch.float32, device='cuda')
+        v_feats_all_w1 = torch.empty(
+            (subg._CAPI_full_get_num_nodes(), W_1.shape[1]), dtype=torch.float32, device='cuda')
+        u_feats_all_w1[neighbors] = u_feats @ W_1
+        v_feats_all_w1[seeds] = v_feats @ W_1
+        u_feats_all_w2 = torch.empty(
+            (subg._CAPI_full_get_num_nodes(), W_2.shape[1]), dtype=torch.float32, device='cuda')
+        v_feats_all_w2 = torch.empty(
+            (subg._CAPI_full_get_num_nodes(), W_2.shape[1]), dtype=torch.float32, device='cuda')
+        u_feats_all_w2[neighbors] = u_feats @ W_2
+        v_feats_all_w2[seeds] = v_feats @ W_2
+
+        res1 = gs.ops.u_mul_v(subA, u_feats_all_w1,
+                              v_feats_all_w1, _COO)
+        att1 = torch.sum(res1, dim=1).unsqueeze(1)
+        res2 = gs.ops.u_mul_v(subA, u_feats_all_w2,
+                              v_feats_all_w2, _COO)
+        att2 = torch.sum(res2, dim=1).unsqueeze(1)
+        att3 = subA._graph._CAPI_full_normalize(
+            0, _CSC)._CAPI_get_data("default").unsqueeze(1)
+        att = torch.cat([att1, att2, att3], dim=1)
+        att = F.relu(att @ F.softmax(sample_a, dim=0))
+        att = att + 10e-10 * torch.ones_like(att)
+        subA.set_data(att)
+        # print("subA before "subA._graph._CAPI_metadata())
+        subg = subA._graph._CAPI_full_sampling_with_probs(
+            0, att, fanout, True, _CSC)
+        subA = gs.Matrix(subg)
+        # print(subA._graph._CAPI_metadata())
+        ret_loss_tuple = (subA._graph._CAPI_get_data('default'), subA._graph._CAPI_get_coo_rows(
+            True), seeds.numel(), fanout)
+        block = subA.full_to_dgl_block(seeds)
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
     input_nodes = seeds
