@@ -4,6 +4,10 @@ import torch
 import numpy as np
 import gs
 
+_CSR = 4
+_CSC = 2
+_COO = 1
+
 
 class FastGCNSampler(dgl.dataloading.BlockSampler):
     def __init__(self, fanouts, replace=False, probs=None, use_uva=False):
@@ -46,6 +50,42 @@ def fastgcn_matrix_sampler(A: gs.Matrix, seeds, probs, fanouts):
             row_indices, node_probs, fanout, False)
         subA = subA[selected, :]
         block = subA.to_dgl_block()
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, ret
+
+
+def fastgcn_matrix_sampler_with_format_selection_best(A: gs.Matrix, seeds, probs, fanouts):
+    graph = A._graph
+    output_nodes = seeds
+    ret = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _CSC)
+        row_indices = subg._CAPI_get_valid_rows()
+        node_probs = probs[row_indices]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, node_probs, fanout, False)
+        subg = subg._CAPI_slicing(selected, 1, _CSC, _CSC)
+        block = gs.Matrix(subg).to_dgl_block()
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, ret
+
+
+def fastgcn_matrix_sampler_with_format_selection_coo(A: gs.Matrix, seeds, probs, fanouts):
+    graph = A._graph
+    output_nodes = seeds
+    ret = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
+        row_indices = subg._CAPI_get_valid_rows()
+        node_probs = probs[row_indices]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, node_probs, fanout, False)
+        subg = subg._CAPI_slicing(selected, 1, _CSC, _COO)
+        block = gs.Matrix(subg).to_dgl_block()
         seeds = block.srcdata['_ID']
         ret.insert(0, block)
     input_nodes = seeds

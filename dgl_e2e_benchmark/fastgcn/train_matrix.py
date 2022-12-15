@@ -56,7 +56,7 @@ def train(dataset, args):
     # compiled_func = gs.jit.compile(
     #     func=fastgcn_sampler, args=(m, torch.Tensor(), fanouts))
     # compiled_func.gm = dce(slicing_and_sampling_fuse(compiled_func.gm))
-    compiled_func = fastgcn_matrix_sampler
+    compiled_func = fastgcn_matrix_sampler_with_format_selection_best
     train_seedloader = SeedGenerator(
         train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(

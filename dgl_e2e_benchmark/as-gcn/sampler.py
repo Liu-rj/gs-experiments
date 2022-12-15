@@ -5,6 +5,12 @@ from torch.nn.functional import normalize, relu
 import numpy as np
 import gs
 
+_DCSR = 16
+_DCSC = 8
+_CSR = 4
+_CSC = 2
+_COO = 1
+
 
 class ASGCNSampler(dgl.dataloading.BlockSampler):
     def __init__(self, fanouts, replace=False, use_uva=False, W=None, eweight=None, node_feats=None):
@@ -140,4 +146,94 @@ def asgcn_matrix_sampler(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
         blocks.insert(0, block)
     input_nodes = seeds
     # torch.cuda.nvtx.range_pop()
+    return input_nodes, output_nodes, blocks
+
+
+def asgcn_matrix_sampler_with_format_selection_best(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
+    graph = A._graph
+    output_nodes = seeds
+    blocks = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _CSC)
+        p = subg._CAPI_sum(1, 2, _COO)
+        p = p.sqrt()
+        row_indices = subg._CAPI_get_valid_rows()
+        if use_uva:
+            node_feats_u = gather_pinned_tensor_rows(features, row_indices)
+            node_feats_v = gather_pinned_tensor_rows(features, seeds)
+        else:
+            node_feats_u = features[row_indices]
+            node_feats_v = features[seeds]
+        h_u = node_feats_u @ W[:, 0]
+        h_v = node_feats_v @ W[:, 1]
+        h_v_sum = torch.sum(h_v)
+        attention = torch.flatten((relu(h_u + h_v_sum) + 1) / fanout)
+        g_u = torch.flatten(relu(h_u) + 1)
+
+        q = normalize(p[row_indices] * attention * g_u, p=1.0, dim=0)
+
+        selected, idx = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, q, fanout, False)
+
+        subg = subg._CAPI_slicing(selected, 1, _COO, _COO)
+        W_tilde = gs.ops.u_add_v(gs.Matrix(subg), h_u[idx], h_v, _COO)
+        W_tilde = (relu(W_tilde) + 1) / selected.numel()
+        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q[idx], _COO)
+        subg._CAPI_set_data(
+            W_tilde * subg._CAPI_get_data('default'), 'default')
+        u_sum = subg._CAPI_sum(1, 1, _COO)
+        u_all = torch.zeros(
+            A.get_num_rows(), dtype=torch.float32, device='cuda')
+        u_all[selected] = u_sum
+
+        block = gs.Matrix(subg).to_dgl_block()
+        block.srcdata['u_sum'] = u_all[block.srcdata['_ID']]
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, blocks
+
+
+def asgcn_matrix_sampler_with_format_selection_coo(A: gs.Matrix, seeds, features, W, fanouts, use_uva):
+    graph = A._graph
+    output_nodes = seeds
+    blocks = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
+        p = subg._CAPI_sum(1, 2, _CSR)
+        p = p.sqrt()
+        row_indices = subg._CAPI_get_valid_rows()
+        if use_uva:
+            node_feats_u = gather_pinned_tensor_rows(features, row_indices)
+            node_feats_v = gather_pinned_tensor_rows(features, seeds)
+        else:
+            node_feats_u = features[row_indices]
+            node_feats_v = features[seeds]
+        h_u = node_feats_u @ W[:, 0]
+        h_v = node_feats_v @ W[:, 1]
+        h_v_sum = torch.sum(h_v)
+        attention = torch.flatten((relu(h_u + h_v_sum) + 1) / fanout)
+        g_u = torch.flatten(relu(h_u) + 1)
+
+        q = normalize(p[row_indices] * attention * g_u, p=1.0, dim=0)
+
+        selected, idx = torch.ops.gs_ops.list_sampling_with_probs(
+            row_indices, q, fanout, False)
+
+        subg = subg._CAPI_slicing(selected, 1, _CSR, _COO)
+        W_tilde = gs.ops.u_add_v(gs.Matrix(subg), h_u[idx], h_v, _COO)
+        W_tilde = (relu(W_tilde) + 1) / selected.numel()
+        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q[idx], _CSR)
+        subg._CAPI_set_data(
+            W_tilde * subg._CAPI_get_data('default'), 'default')
+        u_sum = subg._CAPI_sum(1, 1, _CSR)
+        u_all = torch.zeros(
+            A.get_num_rows(), dtype=torch.float32, device='cuda')
+        u_all[selected] = u_sum
+
+        block = gs.Matrix(subg).to_dgl_block()
+        block.srcdata['u_sum'] = u_all[block.srcdata['_ID']]
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_nodes = seeds
     return input_nodes, output_nodes, blocks
