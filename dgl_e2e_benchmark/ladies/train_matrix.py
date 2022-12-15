@@ -40,14 +40,14 @@ def train(dataset, args):
         weight = weight.to(device)
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_set_data(weight)
+    m._graph._CAPI_set_data(weight, 'col')
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
     model = Model(features.shape[1], 64, n_classes, 2).to('cuda')
     # compiled_func = gs.jit.compile(
     #     func=fastgcn_sampler, args=(m, torch.Tensor(), fanouts))
     # compiled_func.gm = dce(slicing_and_sampling_fuse(compiled_func.gm))
-    compiled_func = ladies_matrix_sampler
+    compiled_func = ladies_matrix_sampler_with_format_selection_best
     train_seedloader = SeedGenerator(
         train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(

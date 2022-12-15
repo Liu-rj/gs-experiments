@@ -4,6 +4,12 @@ import torch
 import numpy as np
 import gs
 
+_DCSR = 16
+_DCSC = 8
+_CSR = 4
+_CSC = 2
+_COO = 1
+
 
 class LADIESSampler(dgl.dataloading.BlockSampler):
     def __init__(self, fanouts, weight='w', out_weight='w', replace=False, W=None, use_uva=False):
@@ -96,4 +102,48 @@ def ladies_matrix_sampler(P: gs.Matrix, seeds, fanouts):
         ret.insert(0, block)
     input_node = seeds
     # torch.cuda.nvtx.range_pop()
+    return input_node, output_node, ret
+
+
+def ladies_matrix_sampler_with_format_selection_best(P: gs.Matrix, seeds, fanouts):
+    graph = P._graph
+    output_node = seeds
+    ret = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _CSC)
+        probs = subg._CAPI_sum(1, 2, _COO)
+        row_nodes = subg._CAPI_get_valid_rows()
+        node_probs = probs[row_nodes]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_nodes, node_probs, fanout, False)
+        nodes = torch.cat((seeds, selected)).unique()  # add self-loop
+        subg = subg._CAPI_slicing(nodes, 1, _COO, _COO)
+        subg = subg._CAPI_divide(probs[nodes], 1, _COO)
+        subg = subg._CAPI_normalize(0, _COO)
+        block = gs.Matrix(subg).to_dgl_block()
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_node = seeds
+    return input_node, output_node, ret
+
+
+def ladies_matrix_sampler_with_format_selection_coo(P: gs.Matrix, seeds, fanouts):
+    graph = P._graph
+    output_node = seeds
+    ret = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
+        probs = subg._CAPI_sum(1, 2, _CSR)
+        row_nodes = subg._CAPI_get_valid_rows()
+        node_probs = probs[row_nodes]
+        selected, _ = torch.ops.gs_ops.list_sampling_with_probs(
+            row_nodes, node_probs, fanout, False)
+        nodes = torch.cat((seeds, selected)).unique()  # add self-loop
+        subg = subg._CAPI_slicing(nodes, 1, _CSR, _COO)
+        subg = subg._CAPI_divide(probs[nodes], 1, _CSR)
+        subg = subg._CAPI_normalize(0, _CSC)
+        block = gs.Matrix(subg).to_dgl_block()
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_node = seeds
     return input_node, output_node, ret
