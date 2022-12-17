@@ -34,12 +34,12 @@ def train(dataset, args):
     else:
         features, labels = features.to(device), labels.to(device)
     m = gs.Matrix(gs.Graph(False))
-    # m._graph._CAPI_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_full_load_csc(csc_indptr, csc_indices)
+    m._graph._CAPI_load_csc(csc_indptr, csc_indices)
+    # m._graph._CAPI_full_load_csc(csc_indptr, csc_indices)
     del g
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
-    compiled_func = matrix_sampler_coo_full
+    compiled_func = matrix_sampler_best
     train_seedloader = SeedGenerator(
         train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(
