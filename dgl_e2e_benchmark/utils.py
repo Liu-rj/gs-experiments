@@ -52,6 +52,14 @@ def load_friendster():
     print(g)
     return g, feat, labels, n_classes, splitted_idx
 
+def get_rand_type():
+    val = np.random.uniform()
+    if val < 0.1:
+      return 0
+    elif val < 0.4:
+      return 1
+    return 2
+
 def get_graph(format=None):
     g = None
     # if os.path.exists(bin_path):
