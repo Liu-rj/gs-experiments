@@ -46,7 +46,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         subgraph = subgraph.formats(["csc"])
         subgraph = subgraph.formats(["csc", "coo"])
         tic = time.time()
-        subgraph.adj_sparse("coo")
+        subgraph.adj_sparse('coo')
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
@@ -58,7 +58,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         subgraph = subgraph.formats(["csc", "coo"])
         subgraph = subgraph.formats(["csc", "coo", "csr"])
         tic = time.time()
-        subgraph.adj_sparse("csr")
+        subgraph.adj_sparse('csr')
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
@@ -105,9 +105,19 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     for i in range(100):
         sub_m._CAPI_drop_format(_CSR)
         tic = time.time()
-        sub_m._CAPI_create_format(_DCSR)
+        sub_m._CAPI_create_format(_CSR)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
     print("DCSR", "COO2CSR", num_seeds, num_edges,
+          1000 * np.mean(time_list[10:]))
+
+    for i in range(100):
+        sub_m._CAPI_drop_format(_CSR)
+        tic = time.time()
+        sub_m._CAPI_create_format(_DCSR)
+        torch.cuda.synchronize()
+        toc = time.time()
+        time_list.append(toc - tic)
+    print("DCSR", "COO2DCSR", num_seeds, num_edges,
           1000 * np.mean(time_list[10:]))
