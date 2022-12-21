@@ -13,7 +13,7 @@ _COO = 1
 
 torch.manual_seed(1)
 
-data = DglNodePropPredDataset(name='ogbn-products', root="../../datasets")
+data = DglNodePropPredDataset(name='ogbn-products', root="/home/ubuntu/.dgl")
 graph = data[0][0]
 graph.ndata.clear()
 graph.edata.clear()
@@ -43,8 +43,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     weight = torch.ones(num_edges, dtype=torch.float32).cuda()
 
     subgraph = subgraph.formats("coo")
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         dgl.ops.copy_e_sum(subgraph, weight)
         torch.cuda.synchronize()
@@ -53,8 +54,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print(" DGL", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     subgraph = subgraph.formats("csc")
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         dgl.ops.copy_e_sum(subgraph, weight)
         torch.cuda.synchronize()
@@ -65,8 +67,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     # Full
     sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _CSC)
     sub_full_m._CAPI_set_data(weight.clone())
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_full_m._CAPI_full_sum(1, 1, _COO)
         torch.cuda.synchronize()
@@ -75,8 +78,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("Full", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     sub_full_m._CAPI_set_data(weight.clone())
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_full_m._CAPI_full_sum(1, 1, _CSR)
         torch.cuda.synchronize()
@@ -87,8 +91,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     # DCSR
     sub_m = m._CAPI_slicing(seeds, 0, _CSC, _CSC)
     sub_m._CAPI_set_data(weight.clone())
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_sum(1, 1, _COO)
         torch.cuda.synchronize()
@@ -97,8 +102,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("DCSR", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     sub_m._CAPI_set_data(weight.clone())
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_sum(1, 1, _CSR)
         torch.cuda.synchronize()
@@ -108,8 +114,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
 
     sub_m._CAPI_set_data(weight.clone())
     sub_m._CAPI_drop_format(_CSR)
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_sum(1, 1, _DCSR)
         torch.cuda.synchronize()

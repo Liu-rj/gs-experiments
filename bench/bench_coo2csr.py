@@ -13,7 +13,7 @@ _COO = 1
 
 torch.manual_seed(1)
 
-data = DglNodePropPredDataset(name='ogbn-products', root="../../datasets")
+data = DglNodePropPredDataset(name='ogbn-products', root="/home/ubuntu/.dgl")
 graph = data[0][0]
 graph.ndata.clear()
 graph.edata.clear()
@@ -41,22 +41,13 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     num_edges = subgraph.num_edges()
     subgraph = subgraph.formats("csc")
 
-    time_list.clear()
-    for i in range(100):
-        subgraph = subgraph.formats(["csc"])
-        subgraph = subgraph.formats(["csc", "coo"])
-        tic = time.time()
-        subgraph.adj_sparse('coo')
-        torch.cuda.synchronize()
-        toc = time.time()
-        time_list.append(toc - tic)
-    print(" DGL", "CSC2COO", num_seeds, num_edges,
-          1000 * np.mean(time_list[10:]))
-
-    time_list.clear()
+    subgraph = subgraph.formats(["csc", "coo"])
+    subgraph.create_formats_()
+    time_list = []
     for i in range(100):
         subgraph = subgraph.formats(["csc", "coo"])
         subgraph = subgraph.formats(["csc", "coo", "csr"])
+        torch.cuda.synchronize()
         tic = time.time()
         subgraph.adj_sparse('csr')
         torch.cuda.synchronize()
@@ -67,21 +58,12 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
 
     # Full Format Conversion
     sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _CSC)
-    sub_full_m._CAPI_full_create_format(_CSC)
-    time_list.clear()
-    for i in range(100):
-        sub_full_m._CAPI_drop_format(_COO)
-        tic = time.time()
-        sub_full_m._CAPI_full_create_format(_COO)
-        torch.cuda.synchronize()
-        toc = time.time()
-        time_list.append(toc - tic)
-    print("Full", "CSC2COO", num_seeds, num_edges,
-          1000 * np.mean(time_list[10:]))
 
-    time_list.clear()
+    time_list = []
+    sub_full_m._CAPI_full_create_format(_COO)
     for i in range(100):
         sub_full_m._CAPI_drop_format(_CSR)
+        torch.cuda.synchronize()
         tic = time.time()
         sub_full_m._CAPI_full_create_format(_CSR)
         torch.cuda.synchronize()
@@ -92,20 +74,11 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
 
     # DCSR
     sub_m = m._CAPI_slicing(seeds, 0, _CSC, _CSC)
-    time_list.clear()
-    for i in range(100):
-        sub_m._CAPI_drop_format(_COO)
-        tic = time.time()
-        sub_m._CAPI_create_format(_COO)
-        torch.cuda.synchronize()
-        toc = time.time()
-        time_list.append(toc - tic)
-    print("DCSR", "CSC2COO", num_seeds, num_edges,
-          1000 * np.mean(time_list[10:]))
-
-    time_list.clear()
+    time_list = []
+    sub_m._CAPI_full_create_format(_COO)
     for i in range(100):
         sub_m._CAPI_drop_format(_CSR)
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_create_format(_CSR)
         torch.cuda.synchronize()
@@ -114,9 +87,10 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("DCSR", "COO2CSR", num_seeds, num_edges,
           1000 * np.mean(time_list[10:]))
 
-    time_list.clear()
+    time_list = []
     for i in range(100):
         sub_m._CAPI_drop_format(_CSR)
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_create_format(_DCSR)
         torch.cuda.synchronize()

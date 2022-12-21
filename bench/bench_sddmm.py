@@ -13,7 +13,7 @@ _COO = 1
 
 torch.manual_seed(1)
 
-data = DglNodePropPredDataset(name='ogbn-products', root="../../datasets")
+data = DglNodePropPredDataset(name='ogbn-products', root="/home/ubuntu/.dgl")
 graph = data[0][0]
 graph.ndata.clear()
 graph.edata.clear()
@@ -44,8 +44,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     num_edges = subgraph.num_edges()
 
     subgraph = subgraph.formats("coo")
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         dgl.ops.u_add_v(subgraph, lhs, rhs)
         torch.cuda.synchronize()
@@ -54,8 +55,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print(" DGL", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     subgraph = subgraph.formats("csr")
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         dgl.ops.u_add_v(subgraph, lhs, rhs)
         torch.cuda.synchronize()
@@ -68,8 +70,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     lhs = torch.ones(sub_full_m._CAPI_full_get_num_nodes()).float().cuda()
     rhs = torch.ones(sub_full_m._CAPI_full_get_num_nodes()).float().cuda()
     out = torch.empty(sub_full_m._CAPI_get_num_edges()).float().cuda()
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_full_m._CAPI_full_sddmm("add", lhs, rhs, out, 0, 2, _COO)
         torch.cuda.synchronize()
@@ -77,8 +80,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("Full", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_full_m._CAPI_full_sddmm("add", lhs, rhs, out, 0, 2, _CSC)
         torch.cuda.synchronize()
@@ -86,8 +90,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("Full", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_full_m._CAPI_full_sddmm("add", lhs, rhs, out, 0, 2, _CSR)
         torch.cuda.synchronize()
@@ -100,8 +105,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     lhs = torch.ones(sub_m._CAPI_get_num_cols(), dtype=torch.float32).cuda()
     rhs = torch.ones(sub_m._CAPI_get_num_rows(), dtype=torch.float32).cuda()
     out = torch.empty(sub_m._CAPI_get_num_edges(), dtype=torch.float32).cuda()
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _COO)
         torch.cuda.synchronize()
@@ -109,8 +115,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("DCSR", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _CSC)
         torch.cuda.synchronize()
@@ -118,8 +125,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("DCSR", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _CSR)
         torch.cuda.synchronize()
@@ -128,8 +136,9 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("DCSR", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     sub_m._CAPI_drop_format(_CSR)
-    time_list.clear()
+    time_list = []
     for i in range(100):
+        torch.cuda.synchronize()
         tic = time.time()
         sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _DCSR)
         torch.cuda.synchronize()
