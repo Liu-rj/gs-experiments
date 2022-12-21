@@ -79,6 +79,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("Full", "CSC2COO", num_seeds, num_edges,
           1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
     for i in range(100):
         sub_full_m._CAPI_drop_format(_CSR)
         tic = time.time()
@@ -102,6 +103,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("DCSR", "CSC2COO", num_seeds, num_edges,
           1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
     for i in range(100):
         sub_m._CAPI_drop_format(_CSR)
         tic = time.time()
@@ -112,6 +114,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("DCSR", "COO2CSR", num_seeds, num_edges,
           1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
     for i in range(100):
         sub_m._CAPI_drop_format(_CSR)
         tic = time.time()

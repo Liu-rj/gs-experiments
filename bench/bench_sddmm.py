@@ -77,6 +77,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("Full", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
     for i in range(100):
         tic = time.time()
         sub_full_m._CAPI_full_sddmm("add", lhs, rhs, out, 0, 2, _CSC)
@@ -85,6 +86,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("Full", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
     for i in range(100):
         tic = time.time()
         sub_full_m._CAPI_full_sddmm("add", lhs, rhs, out, 0, 2, _CSR)
@@ -107,6 +109,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("DCSR", "COO", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
     for i in range(100):
         tic = time.time()
         sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _CSC)
@@ -115,6 +118,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         time_list.append(toc - tic)
     print("DCSR", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
     for i in range(100):
         tic = time.time()
         sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _CSR)
@@ -124,6 +128,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("DCSR", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     sub_m._CAPI_drop_format(_CSR)
+    time_list.clear()
     for i in range(100):
         tic = time.time()
         sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _DCSR)
