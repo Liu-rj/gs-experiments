@@ -282,7 +282,7 @@ def asgcn_matrix_sampler_with_format_selection_coo_full(A: gs.Matrix, seeds, fea
         W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q_allnodes, _CSR)
         subg._CAPI_set_data(
             W_tilde * subg._CAPI_get_data('default'), 'default')
-        u_sum_all = subg._CAPI_sum(1, 1, _CSR)
+        u_sum_all = subg._CAPI_full_sum(1, 1, _CSR)
 
         block = gs.Matrix(subg).full_to_dgl_block(seeds)
         block.srcdata['u_sum'] = u_sum_all[block.srcdata['_ID']]
