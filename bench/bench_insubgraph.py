@@ -50,7 +50,7 @@ for num_seeds in [1000]:  #, 10000, 100000, 500000, 1000000]:
     print(" DGL", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     # Full
-    sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _COO)
+    sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _CSC)
     time_list.clear()
     for i in range(100):
         tic = time.time()
