@@ -5,6 +5,8 @@ from ogb.nodeproppred import DglNodePropPredDataset
 import time
 import numpy as np
 
+_DCSR = 16
+_DCSC = 8
 _CSR = 4
 _CSC = 2
 _COO = 1
@@ -120,3 +122,12 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         toc = time.time()
         time_list.append(toc - tic)
     print("DCSR", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
+
+    sub_m._CAPI_drop_format(_CSR)
+    for i in range(100):
+        tic = time.time()
+        sub_m._CAPI_sddmm("add", lhs, rhs, out, 0, 2, _DCSR)
+        torch.cuda.synchronize()
+        toc = time.time()
+        time_list.append(toc - tic)
+    print("DCSR", "DCSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))

@@ -5,6 +5,8 @@ from ogb.nodeproppred import DglNodePropPredDataset
 import time
 import numpy as np
 
+_DCSR = 16
+_DCSC = 8
 _CSR = 4
 _CSC = 2
 _COO = 1
@@ -35,7 +37,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     time_list = []
 
     # DGL SpMM
-    subgraph = dgl.in_subgraph(graph, seeds)
+    subgraph = dgl.in_subgraph(graph, seeds).to('cuda')
     num_edges = subgraph.num_edges()
     time_list.clear()
     for i in range(100):
@@ -44,7 +46,6 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
-
     print(" DGL", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     # Full
@@ -61,19 +62,20 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     time_list.clear()
     for i in range(100):
         tic = time.time()
-        sub_full_m._CAPI_full_slicing(seeds, 1, _CSR)
-        torch.cuda.synchronize()
-        toc = time.time()
-        time_list.append(toc - tic)
-    print("Full", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
-
-    for i in range(100):
-        tic = time.time()
         sub_full_m._CAPI_full_slicing(seeds, 1, _CSC)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
     print("Full", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
+
+    time_list.clear()
+    for i in range(100):
+        tic = time.time()
+        sub_full_m._CAPI_full_slicing(seeds, 1, _CSR)
+        torch.cuda.synchronize()
+        toc = time.time()
+        time_list.append(toc - tic)
+    print("Full", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     # DCSR
     sub_m = m._CAPI_slicing(seeds, 0, _CSC, _CSC)
@@ -89,16 +91,27 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     time_list.clear()
     for i in range(100):
         tic = time.time()
+        sub_m._CAPI_slicing(seeds, 1, _CSC, _CSC)
+        torch.cuda.synchronize()
+        toc = time.time()
+        time_list.append(toc - tic)
+    print("DCSR", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
+
+    time_list.clear()
+    for i in range(100):
+        tic = time.time()
         sub_m._CAPI_slicing(seeds, 1, _CSR, _CSR)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
     print("DCSR", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
+    time_list.clear()
+    sub_m._CAPI_drop_format(_CSR)
     for i in range(100):
         tic = time.time()
-        sub_m._CAPI_slicing(seeds, 1, _CSC, _CSC)
+        sub_m._CAPI_slicing(seeds, 1, _DCSR, _CSR)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
-    print("DCSR", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
+    print("DCSR", "DCSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
