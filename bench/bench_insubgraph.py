@@ -30,12 +30,14 @@ full_m._CAPI_full_load_csc(indptr, indices)
 
 node_seeds = torch.randperm(graph.num_nodes())
 
-for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
+for num_seeds in [1000]:  #, 10000, 100000, 500000, 1000000]:
     seeds = node_seeds[:num_seeds].cuda()
     time_list = []
 
     # DGL SpMM
     subgraph = dgl.in_subgraph(graph, seeds)
+    for i in subgraph.adj_sparse('coo'):
+        print(i)
     num_edges = subgraph.num_edges()
     time_list.clear()
     for i in range(100):
@@ -76,7 +78,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     print("Full", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     # DCSR
-    sub_m = m._CAPI_slicing(seeds, 0, _COO, _COO)
+    sub_m = m._CAPI_slicing(seeds, 0, _CSC, _CSC)
     time_list.clear()
     for i in range(100):
         tic = time.time()
