@@ -35,21 +35,24 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     time_list = []
 
     # DGL SpMM
+    subgraph = dgl.in_subgraph(graph, seeds)
+    num_edges = subgraph.num_edges()
     time_list.clear()
     for i in range(100):
         tic = time.time()
-        subgraph = dgl.in_subgraph(graph, seeds)
+        dgl.out_subgraph(subgraph, seeds)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
-    num_edges = subgraph.num_edges()
-    print(" DGL", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
+
+    print(" DGL", "CSR", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     # Full
+    sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _COO)
     time_list.clear()
     for i in range(100):
         tic = time.time()
-        sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _COO)
+        sub_full_m._CAPI_full_slicing(seeds, 1, _COO)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
@@ -58,7 +61,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     time_list.clear()
     for i in range(100):
         tic = time.time()
-        sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _CSR)
+        sub_full_m._CAPI_full_slicing(seeds, 1, _CSR)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
@@ -66,17 +69,18 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
 
     for i in range(100):
         tic = time.time()
-        sub_full_m = full_m._CAPI_full_slicing(seeds, 0, _CSC)
+        sub_full_m._CAPI_full_slicing(seeds, 1, _CSC)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
     print("Full", "CSC", num_seeds, num_edges, 1000 * np.mean(time_list[10:]))
 
     # DCSR
+    sub_m = m._CAPI_slicing(seeds, 0, _COO, _COO)
     time_list.clear()
     for i in range(100):
         tic = time.time()
-        sub_m = m._CAPI_slicing(seeds, 0, _COO, _COO)
+        sub_m._CAPI_slicing(seeds, 1, _COO, _COO)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
@@ -85,7 +89,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
     time_list.clear()
     for i in range(100):
         tic = time.time()
-        sub_m = m._CAPI_slicing(seeds, 0, _CSR, _CSR)
+        sub_m._CAPI_slicing(seeds, 1, _CSR, _CSR)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
@@ -93,7 +97,7 @@ for num_seeds in [1000, 10000, 100000, 500000, 1000000]:
 
     for i in range(100):
         tic = time.time()
-        sub_m = m._CAPI_slicing(seeds, 0, _CSC, _CSC)
+        sub_m._CAPI_slicing(seeds, 1, _CSC, _CSC)
         torch.cuda.synchronize()
         toc = time.time()
         time_list.append(toc - tic)
