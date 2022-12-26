@@ -12,7 +12,15 @@ _COO = 1
 
 
 class DGLNeighborSampler(BlockSampler):
-    def __init__(self, fanouts, W_1, W_2, sample_a, use_uva, edge_dir='in', features=None):
+
+    def __init__(self,
+                 fanouts,
+                 W_1,
+                 W_2,
+                 sample_a,
+                 use_uva,
+                 edge_dir='in',
+                 features=None):
         super().__init__()
         self.fanouts = fanouts
         self.edge_dir = edge_dir
@@ -37,23 +45,29 @@ class DGLNeighborSampler(BlockSampler):
             else:
                 u_feats = self.features[nodes]
                 v_feats = self.features[seed_nodes]
-            u_feats_all_w1 = torch.empty(
-                (subg.num_nodes(), self.W_1.shape[1]), dtype=torch.float32, device='cuda')
-            v_feats_all_w1 = torch.empty(
-                (subg.num_nodes(), self.W_1.shape[1]), dtype=torch.float32, device='cuda')
+            u_feats_all_w1 = torch.empty((subg.num_nodes(), self.W_1.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
+            v_feats_all_w1 = torch.empty((subg.num_nodes(), self.W_1.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
             u_feats_all_w1[nodes] = u_feats @ self.W_1
             v_feats_all_w1[seed_nodes] = v_feats @ self.W_1
-            u_feats_all_w2 = torch.empty(
-                (subg.num_nodes(), self.W_2.shape[1]), dtype=torch.float32, device='cuda')
-            v_feats_all_w2 = torch.empty(
-                (subg.num_nodes(), self.W_2.shape[1]), dtype=torch.float32, device='cuda')
+            u_feats_all_w2 = torch.empty((subg.num_nodes(), self.W_2.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
+            v_feats_all_w2 = torch.empty((subg.num_nodes(), self.W_2.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
             u_feats_all_w2[nodes] = u_feats @ self.W_2
             v_feats_all_w2[seed_nodes] = v_feats @ self.W_2
 
             att1 = torch.sum(dgl.ops.u_mul_v(subg, u_feats_all_w1,
-                                             v_feats_all_w1), dim=1).unsqueeze(1)
+                                             v_feats_all_w1),
+                             dim=1).unsqueeze(1)
             att2 = torch.sum(dgl.ops.u_mul_v(subg, u_feats_all_w2,
-                                             v_feats_all_w2), dim=1).unsqueeze(1)
+                                             v_feats_all_w2),
+                             dim=1).unsqueeze(1)
             subg.ndata['v'] = subg.in_degrees()
             subg.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
             att3 = subg.edata['w'].unsqueeze(1)
@@ -61,8 +75,11 @@ class DGLNeighborSampler(BlockSampler):
             att = F.relu(att @ F.softmax(self.sample_a, dim=0))
             att = att + 10e-10 * torch.ones_like(att)
 
-            frontier = dgl.sampling.sample_neighbors(
-                subg, seed_nodes, fanout, prob=att, replace=True)
+            frontier = dgl.sampling.sample_neighbors(subg,
+                                                     seed_nodes,
+                                                     fanout,
+                                                     prob=att,
+                                                     replace=True)
             csc_indptr, csc_indices, edge_ids = frontier.adj_sparse('csc')
             self.ret_loss_tuple = (att[frontier.edata[dgl.EID]][edge_ids],
                                    csc_indices, seed_nodes.numel(), fanout)
@@ -73,7 +90,91 @@ class DGLNeighborSampler(BlockSampler):
         return input_nodes, output_nodes, blocks
 
 
-def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, use_uva):
+class DGLNeighborSamplerRelabel(BlockSampler):
+
+    def __init__(self,
+                 fanouts,
+                 W_1,
+                 W_2,
+                 sample_a,
+                 use_uva,
+                 edge_dir='in',
+                 features=None):
+        super().__init__()
+        self.fanouts = fanouts
+        self.edge_dir = edge_dir
+        self.W_1 = W_1
+        self.W_2 = W_2
+        self.sample_a = sample_a
+        self.use_uva = use_uva
+        self.features = features
+        self.ret_loss_tuple = None
+
+    def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+        output_nodes = seed_nodes
+        blocks = []
+        for fanout in reversed(self.fanouts):
+            subg = dgl.in_subgraph(g, seed_nodes, relabel_nodes=True)
+            edges = subg.edges()
+            nodes = torch.unique(edges[0])
+            relabel_seeds_nodes = torch.ops.gs_ops.index_search(
+                subg.ndata[dgl.NID], seed_nodes)
+
+            if self.use_uva:
+                u_feats = gather_pinned_tensor_rows(self.features,
+                                                    subg.ndata[dgl.EID][nodes])
+                v_feats = gather_pinned_tensor_rows(self.features, seed_nodes)
+            else:
+                u_feats = self.features[subg.ndata[dgl.EID][nodes]]
+                v_feats = self.features[seed_nodes]
+            u_feats_all_w1 = torch.empty((subg.num_nodes(), self.W_1.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
+            v_feats_all_w1 = torch.empty((subg.num_nodes(), self.W_1.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
+            u_feats_all_w1[nodes] = u_feats @ self.W_1
+            v_feats_all_w1[relabel_seeds_nodes] = v_feats @ self.W_1
+            u_feats_all_w2 = torch.empty((subg.num_nodes(), self.W_2.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
+            v_feats_all_w2 = torch.empty((subg.num_nodes(), self.W_2.shape[1]),
+                                         dtype=torch.float32,
+                                         device='cuda')
+            u_feats_all_w2[nodes] = u_feats @ self.W_2
+            v_feats_all_w2[relabel_seeds_nodes] = v_feats @ self.W_2
+
+            att1 = torch.sum(dgl.ops.u_mul_v(subg, u_feats_all_w1,
+                                             v_feats_all_w1),
+                             dim=1).unsqueeze(1)
+            att2 = torch.sum(dgl.ops.u_mul_v(subg, u_feats_all_w2,
+                                             v_feats_all_w2),
+                             dim=1).unsqueeze(1)
+            subg.ndata['v'] = subg.in_degrees()
+            subg.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
+            att3 = subg.edata['w'].unsqueeze(1)
+            att = torch.cat([att1, att2, att3], dim=1)
+            att = F.relu(att @ F.softmax(self.sample_a, dim=0))
+            att = att + 10e-10 * torch.ones_like(att)
+
+            frontier = dgl.sampling.sample_neighbors(subg,
+                                                     relabel_seeds_nodes,
+                                                     fanout,
+                                                     prob=att,
+                                                     replace=True)
+            csc_indptr, csc_indices, edge_ids = frontier.adj_sparse('csc')
+            self.ret_loss_tuple = (att[frontier.edata[dgl.EID]][edge_ids],
+                                   csc_indices, relabel_seeds_nodes.numel(),
+                                   fanout)
+            block = to_block(frontier, relabel_seeds_nodes)
+            seed_nodes = subg.ndata[dgl.NID][block.srcdata[dgl.NID]]
+            blocks.insert(0, block)
+        input_nodes = seed_nodes
+        return input_nodes, output_nodes, blocks
+
+
+def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a,
+                   use_uva):
     blocks = []
     output_nodes = seeds
     ret_loss_tuple = None
@@ -89,10 +190,10 @@ def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, u
             u_feats = features[neighbors]
             v_feats = features[seeds]
 
-        att1 = torch.sum(gs.ops.u_mul_v(subA, u_feats @ W_1,
-                         v_feats @ W_1), dim=1).unsqueeze(1)
-        att2 = torch.sum(gs.ops.u_mul_v(subA, u_feats @ W_2,
-                         v_feats @ W_2), dim=1).unsqueeze(1)
+        att1 = torch.sum(gs.ops.u_mul_v(subA, u_feats @ W_1, v_feats @ W_1),
+                         dim=1).unsqueeze(1)
+        att2 = torch.sum(gs.ops.u_mul_v(subA, u_feats @ W_2, v_feats @ W_2),
+                         dim=1).unsqueeze(1)
         att3 = subA.normalize(axis=0).get_data().unsqueeze(1)
         att = torch.cat([att1, att2, att3], dim=1)
         att = F.relu(att @ F.softmax(sample_a, dim=0))
@@ -100,8 +201,8 @@ def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, u
         subA.set_data(att)
 
         subA = subA.columnwise_sampling(fanout, replace=True, bias=att)
-        ret_loss_tuple = (subA.get_data(order='col'),
-                          subA.row_indices(), seeds.numel(), fanout)
+        ret_loss_tuple = (subA.get_data(order='col'), subA.row_indices(),
+                          seeds.numel(), fanout)
         block = subA.to_dgl_block()
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
@@ -109,7 +210,8 @@ def matrix_sampler(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, u
     return input_nodes, output_nodes, blocks, ret_loss_tuple
 
 
-def matrix_sampler_coo(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, use_uva):
+def matrix_sampler_coo(A: gs.Matrix, seeds, fanouts, features, W_1, W_2,
+                       sample_a, use_uva):
     blocks = []
     output_nodes = seeds
     ret_loss_tuple = None
@@ -125,11 +227,9 @@ def matrix_sampler_coo(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_
             u_feats = features[neighbors]
             v_feats = features[seeds]
 
-        res1 = gs.ops.u_mul_v(subA, u_feats @ W_1,
-                              v_feats @ W_1, _COO)
+        res1 = gs.ops.u_mul_v(subA, u_feats @ W_1, v_feats @ W_1, _COO)
         att1 = torch.sum(res1, dim=1).unsqueeze(1)
-        res2 = gs.ops.u_mul_v(subA, u_feats @ W_2,
-                              v_feats @ W_2, _COO)
+        res2 = gs.ops.u_mul_v(subA, u_feats @ W_2, v_feats @ W_2, _COO)
         att2 = torch.sum(res2, dim=1).unsqueeze(1)
         att3 = subA._graph._CAPI_normalize(
             0, _CSC)._CAPI_get_data("default").unsqueeze(1)
@@ -138,12 +238,13 @@ def matrix_sampler_coo(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_
         att = att + 10e-10 * torch.ones_like(att)
         subA.set_data(att)
         # print("subA before "subA._graph._CAPI_metadata())
-        subg = subA._graph._CAPI_sampling_with_probs(
-            0, att, fanout, True, _CSC, _COO)
+        subg = subA._graph._CAPI_sampling_with_probs(0, att, fanout, True,
+                                                     _CSC, _COO)
         subA = gs.Matrix(subg)
         # print(subA._graph._CAPI_metadata())
-        ret_loss_tuple = (subA._graph._CAPI_get_data('default'), subA._graph._CAPI_get_coo_rows(
-            True), seeds.numel(), fanout)
+        ret_loss_tuple = (subA._graph._CAPI_get_data('default'),
+                          subA._graph._CAPI_get_coo_rows(True), seeds.numel(),
+                          fanout)
         block = subA.to_dgl_block()
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
@@ -151,7 +252,8 @@ def matrix_sampler_coo(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_
     return input_nodes, output_nodes, blocks, ret_loss_tuple
 
 
-def matrix_sampler_best(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, use_uva):
+def matrix_sampler_best(A: gs.Matrix, seeds, fanouts, features, W_1, W_2,
+                        sample_a, use_uva):
     blocks = []
     output_nodes = seeds
     ret_loss_tuple = None
@@ -167,11 +269,9 @@ def matrix_sampler_best(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample
             u_feats = features[neighbors]
             v_feats = features[seeds]
 
-        res1 = gs.ops.u_mul_v(subA, u_feats @ W_1,
-                              v_feats @ W_1, _COO)
+        res1 = gs.ops.u_mul_v(subA, u_feats @ W_1, v_feats @ W_1, _COO)
         att1 = torch.sum(res1, dim=1).unsqueeze(1)
-        res2 = gs.ops.u_mul_v(subA, u_feats @ W_2,
-                              v_feats @ W_2, _COO)
+        res2 = gs.ops.u_mul_v(subA, u_feats @ W_2, v_feats @ W_2, _COO)
         att2 = torch.sum(res2, dim=1).unsqueeze(1)
         att3 = subA._graph._CAPI_normalize(
             0, _CSC)._CAPI_get_data("default").unsqueeze(1)
@@ -180,12 +280,13 @@ def matrix_sampler_best(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample
         att = att + 10e-10 * torch.ones_like(att)
         subA.set_data(att)
         # print("subA before "subA._graph._CAPI_metadata())
-        subg = subA._graph._CAPI_sampling_with_probs(
-            0, att, fanout, True, _CSC, _CSC)
+        subg = subA._graph._CAPI_sampling_with_probs(0, att, fanout, True,
+                                                     _CSC, _CSC)
         subA = gs.Matrix(subg)
         # print(subA._graph._CAPI_metadata())
-        ret_loss_tuple = (subA._graph._CAPI_get_data('default'), subA._graph._CAPI_get_coo_rows(
-            True), seeds.numel(), fanout)
+        ret_loss_tuple = (subA._graph._CAPI_get_data('default'),
+                          subA._graph._CAPI_get_coo_rows(True), seeds.numel(),
+                          fanout)
         block = subA.to_dgl_block()
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)
@@ -193,7 +294,8 @@ def matrix_sampler_best(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample
     return input_nodes, output_nodes, blocks, ret_loss_tuple
 
 
-def matrix_sampler_coo_full(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_a, use_uva):
+def matrix_sampler_coo_full(A: gs.Matrix, seeds, fanouts, features, W_1, W_2,
+                            sample_a, use_uva):
     blocks = []
     output_nodes = seeds
     ret_loss_tuple = None
@@ -210,23 +312,29 @@ def matrix_sampler_coo_full(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sa
             v_feats = features[seeds]
 
         u_feats_all_w1 = torch.empty(
-            (subg._CAPI_full_get_num_nodes(), W_1.shape[1]), dtype=torch.float32, device='cuda')
+            (subg._CAPI_full_get_num_nodes(), W_1.shape[1]),
+            dtype=torch.float32,
+            device='cuda')
         v_feats_all_w1 = torch.empty(
-            (subg._CAPI_full_get_num_nodes(), W_1.shape[1]), dtype=torch.float32, device='cuda')
+            (subg._CAPI_full_get_num_nodes(), W_1.shape[1]),
+            dtype=torch.float32,
+            device='cuda')
         u_feats_all_w1[neighbors] = u_feats @ W_1
         v_feats_all_w1[seeds] = v_feats @ W_1
         u_feats_all_w2 = torch.empty(
-            (subg._CAPI_full_get_num_nodes(), W_2.shape[1]), dtype=torch.float32, device='cuda')
+            (subg._CAPI_full_get_num_nodes(), W_2.shape[1]),
+            dtype=torch.float32,
+            device='cuda')
         v_feats_all_w2 = torch.empty(
-            (subg._CAPI_full_get_num_nodes(), W_2.shape[1]), dtype=torch.float32, device='cuda')
+            (subg._CAPI_full_get_num_nodes(), W_2.shape[1]),
+            dtype=torch.float32,
+            device='cuda')
         u_feats_all_w2[neighbors] = u_feats @ W_2
         v_feats_all_w2[seeds] = v_feats @ W_2
 
-        res1 = gs.ops.u_mul_v(subA, u_feats_all_w1,
-                              v_feats_all_w1, _COO)
+        res1 = gs.ops.u_mul_v(subA, u_feats_all_w1, v_feats_all_w1, _COO)
         att1 = torch.sum(res1, dim=1).unsqueeze(1)
-        res2 = gs.ops.u_mul_v(subA, u_feats_all_w2,
-                              v_feats_all_w2, _COO)
+        res2 = gs.ops.u_mul_v(subA, u_feats_all_w2, v_feats_all_w2, _COO)
         att2 = torch.sum(res2, dim=1).unsqueeze(1)
         att3 = subA._graph._CAPI_full_normalize(
             0, _CSC)._CAPI_get_data("default").unsqueeze(1)
@@ -239,8 +347,9 @@ def matrix_sampler_coo_full(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sa
             0, att, fanout, True, _CSC)
         subA = gs.Matrix(subg)
         # print(subA._graph._CAPI_metadata())
-        ret_loss_tuple = (subA._graph._CAPI_get_data('default'), subA._graph._CAPI_get_coo_rows(
-            True), seeds.numel(), fanout)
+        ret_loss_tuple = (subA._graph._CAPI_get_data('default'),
+                          subA._graph._CAPI_get_coo_rows(True), seeds.numel(),
+                          fanout)
         block = subA.full_to_dgl_block(seeds)
         seeds = block.srcdata['_ID']
         blocks.insert(0, block)

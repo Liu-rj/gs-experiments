@@ -1,4 +1,3 @@
-
 from dgl.dataloading import DataLoader, NeighborSampler
 from dgl.utils import pin_memory_inplace
 from model import *
@@ -20,14 +19,16 @@ def compute_acc(pred, label):
 def train_dgl(dataset, config):
     use_uva = config['use_uva']
     g, features, labels, n_classes, splitted_idx = dataset
-    g = g.formats('csc')
-    train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
+    g = g.formats(['csr', 'csc', 'coo'])
+    g.create_formats_()
+    train_nid, val_nid, _ = splitted_idx['train'], splitted_idx[
+        'valid'], splitted_idx['test']
 
     if use_uva:
         features, labels = features.pin_memory(), labels.pin_memory()
     elif config['device'] == 'cuda':
-        g, train_nid, val_nid = g.to('cuda'), train_nid.to(
-            'cuda'), val_nid.to('cuda')
+        g, train_nid, val_nid = g.to('cuda'), train_nid.to('cuda'), val_nid.to(
+            'cuda')
         features = features.to('cuda')
         labels = labels.to('cuda')
     else:
@@ -35,14 +36,30 @@ def train_dgl(dataset, config):
         labels = labels.to('cuda')
     batch_size = config['batch_size']
     fanouts = [10, 10]
-    model = SAGEModel(
-        features.shape[1], 64, n_classes, len(fanouts), 0.0).to('cuda')
-    sampler = DGLNeighborSampler(
-        fanouts, model.sample_W, model.sample_W2, model.sample_a, use_uva, features=features)
-    train_dataloader = DataLoader(g, train_nid, sampler, batch_size=batch_size,
-                                  shuffle=True,  drop_last=False, num_workers=config['num_workers'], device='cuda')
-    val_dataloader = DataLoader(g, val_nid, sampler, batch_size=batch_size, shuffle=True,
-                                drop_last=False, num_workers=config['num_workers'], device='cuda')
+    model = SAGEModel(features.shape[1], 64, n_classes, len(fanouts),
+                      0.0).to('cuda')
+    sampler = DGLNeighborSamplerRelabel(fanouts,
+                                        model.sample_W,
+                                        model.sample_W2,
+                                        model.sample_a,
+                                        use_uva,
+                                        features=features)
+    train_dataloader = DataLoader(g,
+                                  train_nid,
+                                  sampler,
+                                  batch_size=batch_size,
+                                  shuffle=True,
+                                  drop_last=False,
+                                  num_workers=config['num_workers'],
+                                  device='cuda')
+    val_dataloader = DataLoader(g,
+                                val_nid,
+                                sampler,
+                                batch_size=batch_size,
+                                shuffle=True,
+                                drop_last=False,
+                                num_workers=config['num_workers'],
+                                device='cuda')
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
@@ -95,15 +112,18 @@ def train_dgl(dataset, config):
                 loss.backward()
                 chain_grad = model.X1.grad
                 # Compute intermediate loss for sampling probability parameters
-                sample_loss = sampler_loss(
-                    sampler.ret_loss_tuple, chain_grad.detach(), features, use_uva)
+                sample_loss = sampler_loss(sampler.ret_loss_tuple,
+                                           chain_grad.detach(), features,
+                                           use_uva)
                 sample_loss.backward()
                 opt.step()
                 torch.cuda.synchronize()
                 backward_time += time.time() - tic
                 acc = compute_acc(y_hat, y)
-                tq.set_postfix({'loss': '%.06f' % loss.item(),
-                                'acc': '%.03f' % acc.item()})
+                tq.set_postfix({
+                    'loss': '%.06f' % loss.item(),
+                    'acc': '%.03f' % acc.item()
+                })
                 tic = time.time()
 
         model.eval()
@@ -137,19 +157,22 @@ def train_dgl(dataset, config):
                     val_pred.append(y_hat)
                     val_labels.append(y)
                     tic = time.time()
-           # acc = compute_acc(val_pred,val_labels)
+        # acc = compute_acc(val_pred,val_labels)
 
         torch.cuda.synchronize()
         epoch_list.append(time.time() - start)
-        mem_list.append((torch.cuda.max_memory_allocated() -
-                        static_memory) / (1024 * 1024 * 1024))
+        mem_list.append((torch.cuda.max_memory_allocated() - static_memory) /
+                        (1024 * 1024 * 1024))
         sample_list.append(sampling_time)
         feature_loading_list.append(epoch_feature_loading)
         forward_time_list.append(forward_time)
         backward_time_list.append(backward_time)
 
-        print("Epoch {:05d} | E2E Time {:.4f} s | Forward Time {:.4f} s | Backward Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, epoch_list[-1], forward_time_list[-1], backward_time_list[-1], sample_list[-1], feature_loading_list[-1], mem_list[-1]))
+        print(
+            "Epoch {:05d} | E2E Time {:.4f} s | Forward Time {:.4f} s | Backward Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+            .format(epoch, epoch_list[-1], forward_time_list[-1],
+                    backward_time_list[-1], sample_list[-1],
+                    feature_loading_list[-1], mem_list[-1]))
 
     print('Average epoch feature loading time:',
           np.mean(feature_loading_list[1:]))
@@ -164,17 +187,31 @@ if __name__ == '__main__':
     config = {}
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default='cuda', choices=['cuda', 'cpu'],
+    parser.add_argument("--device",
+                        default='cuda',
+                        choices=['cuda', 'cpu'],
                         help="Training model on gpu or cpu")
-    parser.add_argument('--use-uva', action=argparse.BooleanOptionalAction,
-                        help="Wether to use UVA to sample graph and load feature")
-    parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m'],
+    parser.add_argument(
+        '--use-uva',
+        action=argparse.BooleanOptionalAction,
+        help="Wether to use UVA to sample graph and load feature")
+    parser.add_argument("--dataset",
+                        default='reddit',
+                        choices=['reddit', 'products', 'papers100m'],
                         help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=512,
+    parser.add_argument("--batchsize",
+                        type=int,
+                        default=512,
                         help="batch size for training")
-    parser.add_argument("--num-workers", type=int, default=0,
-                        help="numbers of workers for sampling, must be 0 when gpu or uva is used")
-    parser.add_argument("--num-epoch", type=int, default=5,
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help=
+        "numbers of workers for sampling, must be 0 when gpu or uva is used")
+    parser.add_argument("--num-epoch",
+                        type=int,
+                        default=5,
                         help="numbers of epoch in training")
     args = parser.parse_args()
     config['device'] = args.device

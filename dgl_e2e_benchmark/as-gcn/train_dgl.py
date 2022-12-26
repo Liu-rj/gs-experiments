@@ -19,13 +19,16 @@ def train(dataset, args):
     use_uva = args['use_uva']
 
     g, features, labels, n_classes, splitted_idx = dataset
-    train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
-    g, train_nid, val_nid = g.to(device), train_nid.to(
-        device), val_nid.to(device)
+    train_nid, val_nid, _ = splitted_idx['train'], splitted_idx[
+        'valid'], splitted_idx['test']
+    g, train_nid, val_nid = g.to(device), train_nid.to(device), val_nid.to(
+        device)
     # adj_weight = normalized_laplacian_edata(g)
-    adj_weight = torch.ones(
-        g.num_edges(), dtype=torch.float32, device=g.device)
-    g = g.formats('csc')
+    adj_weight = torch.ones(g.num_edges(),
+                            dtype=torch.float32,
+                            device=g.device)
+    g = g.formats(['csc', 'csr', 'coo'])
+    g.create_formats_()
     if use_uva and device == 'cpu':
         features, labels = features.pin_memory(), labels.pin_memory()
         adj_weight = adj_weight.pin_memory()
@@ -34,26 +37,30 @@ def train(dataset, args):
         adj_weight = adj_weight.to(device)
 
     num_nodes = args['num_nodes']
-    model = Model(features.shape[1],
-                  args['hidden_dim'], n_classes, len(num_nodes)).to('cuda')
-    sampler = ASGCNSampler(num_nodes, replace=False,
-                           use_uva=use_uva, W=model.W_g, eweight=adj_weight, node_feats=features)
-    train_dataloader = DataLoader(
-        g,
-        train_nid,
-        sampler,
-        batch_size=args['batch_size'],
-        shuffle=True,
-        drop_last=False,
-        num_workers=args['num_workers'], use_uva=use_uva)
-    val_dataloader = DataLoader(
-        g,
-        val_nid,
-        sampler,
-        batch_size=args['batch_size'],
-        shuffle=True,
-        drop_last=False,
-        num_workers=args['num_workers'], use_uva=use_uva)
+    model = Model(features.shape[1], args['hidden_dim'], n_classes,
+                  len(num_nodes)).to('cuda')
+    sampler = ASGCNSamplerRelabel(num_nodes,
+                                  replace=False,
+                                  use_uva=use_uva,
+                                  W=model.W_g,
+                                  eweight=adj_weight,
+                                  node_feats=features)
+    train_dataloader = DataLoader(g,
+                                  train_nid,
+                                  sampler,
+                                  batch_size=args['batch_size'],
+                                  shuffle=True,
+                                  drop_last=False,
+                                  num_workers=args['num_workers'],
+                                  use_uva=use_uva)
+    val_dataloader = DataLoader(g,
+                                val_nid,
+                                sampler,
+                                batch_size=args['batch_size'],
+                                shuffle=True,
+                                drop_last=False,
+                                num_workers=args['num_workers'],
+                                use_uva=use_uva)
 
     opt = torch.optim.Adam(model.parameters(), lr=0.001)
     time_list = []
@@ -79,15 +86,15 @@ def train(dataset, args):
         model.train()
         torch.cuda.synchronize()
         tic = time.time()
-        for step, (input_nodes, seeds, blocks) in enumerate(tqdm.tqdm(train_dataloader)):
+        for step, (input_nodes, seeds,
+                   blocks) in enumerate(tqdm.tqdm(train_dataloader)):
             torch.cuda.synchronize()
             sample_time += time.time() - tic
 
             tic = time.time()
             blocks = [block.to('cuda') for block in blocks]
             if use_uva:
-                batch_inputs = gather_pinned_tensor_rows(
-                    features, input_nodes)
+                batch_inputs = gather_pinned_tensor_rows(features, input_nodes)
                 batch_labels = gather_pinned_tensor_rows(labels, seeds)
             else:
                 batch_inputs = features[input_nodes].to('cuda')
@@ -121,7 +128,8 @@ def train(dataset, args):
         with torch.no_grad():
             torch.cuda.synchronize()
             tic = time.time()
-            for step, (input_nodes, seeds, blocks) in enumerate(tqdm.tqdm(val_dataloader)):
+            for step, (input_nodes, seeds,
+                       blocks) in enumerate(tqdm.tqdm(val_dataloader)):
                 torch.cuda.synchronize()
                 sample_time += time.time() - tic
 
@@ -148,20 +156,23 @@ def train(dataset, args):
                 val_labels.append(batch_labels)
                 tic = time.time()
 
-        acc = compute_acc(torch.cat(val_pred, 0),
-                          torch.cat(val_labels, 0)).item()
+        acc = compute_acc(torch.cat(val_pred, 0), torch.cat(val_labels,
+                                                            0)).item()
 
         torch.cuda.synchronize()
         epoch_time.append(time.time() - start)
         time_list.append(sample_time)
-        mem_list.append((torch.cuda.max_memory_allocated() -
-                        static_memory) / (1024 * 1024 * 1024))
+        mem_list.append((torch.cuda.max_memory_allocated() - static_memory) /
+                        (1024 * 1024 * 1024))
         feature_loading_list.append(epoch_feature_loading)
         forward_time_list.append(forward_time)
         backward_time_list.append(backward_time)
 
-        print("Epoch {:05d} | Val Acc {:.4f} | E2E Time {:.4f} s | Forward Time {:.4f} s | Backward Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, acc, epoch_time[-1], forward_time_list[-1], backward_time_list[-1], time_list[-1], feature_loading_list[-1], mem_list[-1]))
+        print(
+            "Epoch {:05d} | Val Acc {:.4f} | E2E Time {:.4f} s | Forward Time {:.4f} s | Backward Time {:.4f} s | Sampling Time {:.4f} s | Feature Loading Time {:.4f} s | GPU Mem Peak {:.4f} GB"
+            .format(epoch, acc, epoch_time[-1], forward_time_list[-1],
+                    backward_time_list[-1], time_list[-1],
+                    feature_loading_list[-1], mem_list[-1]))
 
     print('Average epoch end2end time:', np.mean(epoch_time[2:]))
     print('Average epoch forward time:', np.mean(forward_time_list[2:]))
@@ -173,23 +184,34 @@ def train(dataset, args):
 
 
 if __name__ == '__main__':
-    config = {
-        'num_epochs': 5,
-        'hidden_dim': 64}
+    config = {'num_epochs': 5, 'hidden_dim': 64}
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default='cuda', choices=['cuda', 'cpu'],
+    parser.add_argument("--device",
+                        default='cuda',
+                        choices=['cuda', 'cpu'],
                         help="Training model on gpu or cpu")
-    parser.add_argument('--use-uva', action=argparse.BooleanOptionalAction,
-                        help="Wether to use UVA to sample graph and load feature")
-    parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m'],
+    parser.add_argument(
+        '--use-uva',
+        action=argparse.BooleanOptionalAction,
+        help="Wether to use UVA to sample graph and load feature")
+    parser.add_argument("--dataset",
+                        default='reddit',
+                        choices=['reddit', 'products', 'papers100m'],
                         help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=256,
+    parser.add_argument("--batchsize",
+                        type=int,
+                        default=256,
                         help="batch size for training")
-    parser.add_argument("--samples", default='2000,2000',
+    parser.add_argument("--samples",
+                        default='2000,2000',
                         help="sample size for each layer")
-    parser.add_argument("--num-workers", type=int, default=0,
-                        help="numbers of workers for sampling, must be 0 when gpu or uva is used")
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help=
+        "numbers of workers for sampling, must be 0 when gpu or uva is used")
     args = parser.parse_args()
     config['device'] = args.device
     config['use_uva'] = args.use_uva

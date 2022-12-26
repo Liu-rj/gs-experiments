@@ -123,7 +123,7 @@ class LADIESSamplerRelabel(dgl.dataloading.BlockSampler):
             W_tilde = dgl.ops.e_div_v(subg, W_tilde, W_tilde_sum)
             block = dgl.to_block(subg, relabel_seeds_nodes)
             block.edata[self.output_weight] = W_tilde[block.edata[dgl.EID]]
-            seed_nodes = block.srcdata[dgl.NID]
+            seed_nodes = subg.ndata[dgl.NID][block.srcdata[dgl.NID]]
             blocks.insert(0, block)
         input_nodes = seed_nodes
         return input_nodes, output_nodes, blocks
