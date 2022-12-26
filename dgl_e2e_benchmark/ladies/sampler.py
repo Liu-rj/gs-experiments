@@ -12,7 +12,14 @@ _COO = 1
 
 
 class LADIESSampler(dgl.dataloading.BlockSampler):
-    def __init__(self, fanouts, weight='w', out_weight='w', replace=False, W=None, use_uva=False):
+
+    def __init__(self,
+                 fanouts,
+                 weight='w',
+                 out_weight='w',
+                 replace=False,
+                 W=None,
+                 use_uva=False):
         super().__init__()
         self.fanouts = fanouts
         self.edge_weight = weight
@@ -41,7 +48,7 @@ class LADIESSampler(dgl.dataloading.BlockSampler):
                     self.W, reversed_subg.edata[dgl.EID])
             else:
                 weight = self.W[reversed_subg.edata[dgl.EID]]
-            probs = dgl.ops.copy_e_sum(reversed_subg, weight ** 2)
+            probs = dgl.ops.copy_e_sum(reversed_subg, weight**2)
             # torch.cuda.nvtx.range_pop()
             node_probs = probs[nodes]
             # torch.cuda.nvtx.range_push('sample')
@@ -67,6 +74,58 @@ class LADIESSampler(dgl.dataloading.BlockSampler):
             blocks.insert(0, block)
         input_nodes = seed_nodes
         # torch.cuda.nvtx.range_pop()
+        return input_nodes, output_nodes, blocks
+
+
+class LADIESSamplerRelabel(dgl.dataloading.BlockSampler):
+
+    def __init__(self,
+                 fanouts,
+                 weight='w',
+                 out_weight='w',
+                 replace=False,
+                 W=None,
+                 use_uva=False):
+        super().__init__()
+        self.fanouts = fanouts
+        self.edge_weight = weight
+        self.output_weight = out_weight
+        self.replace = replace
+        self.return_eids = False
+        self.W = W
+        self.use_uva = use_uva
+
+    def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+        blocks = []
+        output_nodes = seed_nodes
+        for fanout in self.fanouts:
+            subg = dgl.in_subgraph(g, seed_nodes, relabel_nodes=True)
+            edges = subg.edges()
+            nodes = torch.unique(edges[0])
+            num_pick = np.min([nodes.shape[0], fanout])
+            reversed_subg = dgl.reverse(subg, copy_edata=True)
+            if self.use_uva:
+                weight = gather_pinned_tensor_rows(
+                    self.W, reversed_subg.edata[dgl.EID])
+            else:
+                weight = self.W[reversed_subg.edata[dgl.EID]]
+            probs = dgl.ops.copy_e_sum(reversed_subg, weight**2)
+            node_probs = probs[nodes]
+            idx = torch.multinomial(node_probs, num_pick, replacement=False)
+            selected = nodes[idx]
+            relabel_seeds_nodes = torch.ops.gs_ops.index_search(
+                subg.ndata[dgl.NID], seed_nodes)
+            selected = torch.cat((relabel_seeds_nodes, selected)).unique()
+            subg = dgl.out_subgraph(subg, selected, relabel_nodes=False)
+            weight = weight[subg.edata[dgl.EID]]
+            W_tilde = dgl.ops.e_div_u(subg, weight, probs)
+            W_tilde_sum = dgl.ops.copy_e_sum(subg, W_tilde)
+            W_tilde = dgl.ops.e_div_v(subg, W_tilde, W_tilde_sum)
+            block = dgl.to_block(subg, relabel_seeds_nodes)
+            block.edata[self.output_weight] = W_tilde[block.edata[dgl.EID]]
+            seed_nodes = block.srcdata[dgl.NID]
+            blocks.insert(0, block)
+        input_nodes = seed_nodes
         return input_nodes, output_nodes, blocks
 
 
@@ -105,7 +164,8 @@ def ladies_matrix_sampler(P: gs.Matrix, seeds, fanouts):
     return input_node, output_node, ret
 
 
-def ladies_matrix_sampler_with_format_selection_best(P: gs.Matrix, seeds, fanouts):
+def ladies_matrix_sampler_with_format_selection_best(P: gs.Matrix, seeds,
+                                                     fanouts):
     graph = P._graph
     output_node = seeds
     ret = []
@@ -127,7 +187,8 @@ def ladies_matrix_sampler_with_format_selection_best(P: gs.Matrix, seeds, fanout
     return input_node, output_node, ret
 
 
-def ladies_matrix_sampler_with_format_selection_coo(P: gs.Matrix, seeds, fanouts):
+def ladies_matrix_sampler_with_format_selection_coo(P: gs.Matrix, seeds,
+                                                    fanouts):
     graph = P._graph
     output_node = seeds
     ret = []
@@ -149,7 +210,8 @@ def ladies_matrix_sampler_with_format_selection_coo(P: gs.Matrix, seeds, fanouts
     return input_node, output_node, ret
 
 
-def ladies_matrix_sampler_with_format_selection_coo_full(P: gs.Matrix, seeds, fanouts):
+def ladies_matrix_sampler_with_format_selection_coo_full(
+        P: gs.Matrix, seeds, fanouts):
     graph = P._graph
     output_node = seeds
     ret = []
