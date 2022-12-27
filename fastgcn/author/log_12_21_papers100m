@@ -1,0 +1,6 @@
+Namespace(batchsize=1024, dataset='papers')
+adjcent matrix shape: (111059956, 111059956)
+num of edges: 1726745828
+train samples: 1207179
+validation samples: 125265
+test samples: 214338

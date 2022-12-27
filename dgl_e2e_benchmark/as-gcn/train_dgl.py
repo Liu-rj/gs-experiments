@@ -184,7 +184,7 @@ if __name__ == '__main__':
                         help="Wether to use UVA to sample graph and load feature")
     parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m'],
                         help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=256,
+    parser.add_argument("--batchsize", type=int, default=1024,
                         help="batch size for training")
     parser.add_argument("--samples", default='2000,2000',
                         help="sample size for each layer")

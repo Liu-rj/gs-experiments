@@ -39,7 +39,7 @@ def train(dataset, args):
     del g
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
-    compiled_func = matrix_sampler_best
+    compiled_func = matrix_sampler_coo
     train_seedloader = SeedGenerator(
         train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(

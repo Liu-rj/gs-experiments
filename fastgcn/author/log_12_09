@@ -1,0 +1,39 @@
+2022-12-19 16:55:43.403900: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use SSE4.1 instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 16:55:43.403956: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use SSE4.2 instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 16:55:43.403965: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use AVX instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 16:55:43.403971: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use AVX2 instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 16:55:43.403977: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use FMA instructions, but these are available on your machine and could speed up CPU computations.
+/home/ubuntu/gs-experiments/fastgcn/author/utils.py:209: RuntimeWarning: divide by zero encountered in power
+  r_inv = np.power(rowsum, -1).flatten()
+Namespace(batchsize=256, dataset='products')
+adjcent matrix shape: (2449029, 2449029)
+num of edges: 126167053
+train samples: 196615
+validation samples: 39323
+test samples: 2213091
+Importance Sampling...
+Epoch: 0001 train_loss= 3.03456 train_acc= 0.27344 val_loss= 2.89830 val_acc= 0.34028 time per epoch= 265.79187 epoch sampling time= 173.63186
+Epoch: 0002 train_loss= 3.09050 train_acc= 0.33984 val_loss= 2.75071 val_acc= 0.37708 time per epoch= 258.97110 epoch sampling time= 168.97612
+Epoch: 0003 train_loss= 2.95947 train_acc= 0.36719 val_loss= 2.66682 val_acc= 0.39697 time per epoch= 258.42027 epoch sampling time= 169.05687
+Average epoch e2e time: 261.061077356
+Average epoch sampling time: 170.554954131
+Namespace(batchsize=2048, dataset='papers')
+adjcent matrix shape: (111059956, 111059956)
+num of edges: 1726745828
+train samples: 1207179
+validation samples: 125265
+test samples: 214338
+Traceback (most recent call last):
+  File "train_batch_multiRank_inductive_reddit_appr2layers.py", line 347, in <module>
+    main(2000, 2000, True, args)
+  File "train_batch_multiRank_inductive_reddit_appr2layers.py", line 137, in main
+    y_train = transferLabel2Onehot(y_train, n_classes)
+  File "train_batch_multiRank_inductive_reddit_appr2layers.py", line 110, in transferLabel2Onehot
+    y[i, pos] = 1
+IndexError: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+2022-12-19 19:39:25.804199: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use SSE4.1 instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 19:39:25.804266: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use SSE4.2 instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 19:39:25.804276: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use AVX instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 19:39:25.804282: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use AVX2 instructions, but these are available on your machine and could speed up CPU computations.
+2022-12-19 19:39:25.804289: W tensorflow/core/platform/cpu_feature_guard.cc:45] The TensorFlow library wasn't compiled to use FMA instructions, but these are available on your machine and could speed up CPU computations.
+run.sh: line 4: 37205 Killed                  python train_batch_multiRank_inductive_reddit_appr2layers.py --dataset=friendster

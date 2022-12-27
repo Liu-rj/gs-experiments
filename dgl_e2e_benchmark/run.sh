@@ -1,5 +1,7 @@
 #!/bin/bash
 cd ./as-gcn
-./run.sh > outputs/log
+bash run.sh > outputs/log_12_23
 cd ../ladies
-./run.sh > outputs/log
+bash run.sh > outputs/log_12_23
+cd ../pass
+bash run.sh > outputs/log_12_23

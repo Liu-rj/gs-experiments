@@ -1,0 +1,4 @@
+#!/bin/bash
+python train_batch_multiRank_inductive_reddit_appr2layers.py --dataset=products
+python train_batch_multiRank_inductive_reddit_appr2layers.py --dataset=papers
+python train_batch_multiRank_inductive_reddit_appr2layers.py --dataset=friendster

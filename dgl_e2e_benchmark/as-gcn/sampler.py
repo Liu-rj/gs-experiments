@@ -155,7 +155,7 @@ def asgcn_matrix_sampler_with_format_selection_best(A: gs.Matrix, seeds, feature
     blocks = []
     for fanout in fanouts:
         subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
-        p = subg._CAPI_sum(1, 2, _COO)
+        p = subg._CAPI_sum(1, 2, _DCSR)
         p = p.sqrt()
         row_indices = subg._CAPI_get_valid_rows()
         if use_uva:
@@ -175,13 +175,12 @@ def asgcn_matrix_sampler_with_format_selection_best(A: gs.Matrix, seeds, feature
         selected, idx = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, q, fanout, False)
 
-        subg = subg._CAPI_slicing(selected, 1, _COO, _COO)
+        subg = subg._CAPI_slicing(selected, 1, _DCSR, _CSR + _COO)
         W_tilde = gs.ops.u_add_v(gs.Matrix(subg), h_u[idx], h_v, _COO)
         W_tilde = (relu(W_tilde) + 1) / selected.numel()
         W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q[idx], _COO)
-        subg._CAPI_set_data(
-            W_tilde * subg._CAPI_get_data('default'), 'default')
-        u_sum = subg._CAPI_sum(1, 1, _COO)
+        subg._CAPI_set_data(W_tilde * subg._CAPI_get_data('default'))
+        u_sum = subg._CAPI_sum(1, 1, _CSR)
         u_all = torch.zeros(
             A.get_num_rows(), dtype=torch.float32, device='cuda')
         u_all[selected] = u_sum
@@ -200,7 +199,7 @@ def asgcn_matrix_sampler_with_format_selection_coo(A: gs.Matrix, seeds, features
     blocks = []
     for fanout in fanouts:
         subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO)
-        p = subg._CAPI_sum(1, 2, _CSR)
+        p = subg._CAPI_sum(1, 2, _DCSR)
         p = p.sqrt()
         row_indices = subg._CAPI_get_valid_rows()
         if use_uva:
@@ -220,12 +219,11 @@ def asgcn_matrix_sampler_with_format_selection_coo(A: gs.Matrix, seeds, features
         selected, idx = torch.ops.gs_ops.list_sampling_with_probs(
             row_indices, q, fanout, False)
 
-        subg = subg._CAPI_slicing(selected, 1, _CSR, _COO)
+        subg = subg._CAPI_slicing(selected, 1, _DCSR, _COO)
         W_tilde = gs.ops.u_add_v(gs.Matrix(subg), h_u[idx], h_v, _COO)
         W_tilde = (relu(W_tilde) + 1) / selected.numel()
-        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q[idx], _CSR)
-        subg._CAPI_set_data(
-            W_tilde * subg._CAPI_get_data('default'), 'default')
+        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q[idx], _COO)
+        subg._CAPI_set_data(W_tilde * subg._CAPI_get_data('default'))
         u_sum = subg._CAPI_sum(1, 1, _CSR)
         u_all = torch.zeros(
             A.get_num_rows(), dtype=torch.float32, device='cuda')
@@ -279,9 +277,8 @@ def asgcn_matrix_sampler_with_format_selection_coo_full(A: gs.Matrix, seeds, fea
         W_tilde = gs.ops.u_add_v(
             gs.Matrix(subg), h_u_allnodes, h_v_allnodes, _COO)
         W_tilde = (relu(W_tilde) + 1) / selected.numel()
-        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q_allnodes, _CSR)
-        subg._CAPI_set_data(
-            W_tilde * subg._CAPI_get_data('default'), 'default')
+        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q_allnodes, _COO)
+        subg._CAPI_set_data(W_tilde * subg._CAPI_get_data('default'))
         u_sum_all = subg._CAPI_full_sum(1, 1, _CSR)
 
         block = gs.Matrix(subg).full_to_dgl_block(seeds)

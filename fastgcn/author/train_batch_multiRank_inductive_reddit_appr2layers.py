@@ -10,6 +10,9 @@ from models import GCN, MLP, GCN_APPRO
 import json
 from networkx.readwrite import json_graph
 import os
+import argparse
+import numpy as np
+from tqdm import tqdm
 
 # Set random seed
 seed = 123
@@ -23,14 +26,14 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('dataset', 'pubmed', 'Dataset string.')
 flags.DEFINE_string('model', 'gcn_appr', 'Model string.')  # 'gcn', 'gcn_appr'
 flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate.')
-flags.DEFINE_integer('epochs', 10, 'Number of epochs to train.')
-flags.DEFINE_integer('hidden1', 128, 'Number of units in hidden layer 1.')
+flags.DEFINE_integer('epochs', 3, 'Number of epochs to train.')
+flags.DEFINE_integer('hidden1', 64, 'Number of units in hidden layer 1.')
 flags.DEFINE_float('dropout', 0.0, 'Dropout rate (1 - keep probability).')
 flags.DEFINE_float('weight_decay', 1e-4,
                    'Weight for L2 loss on embedding matrix.')
-flags.DEFINE_integer('early_stopping', 100,
-                     'Tolerance for early stopping (# of epochs).')
-flags.DEFINE_integer('max_degree', 3, 'Maximum Chebyshev polynomial degree.')
+# flags.DEFINE_integer('early_stopping', 100,
+#                      'Tolerance for early stopping (# of epochs).')
+# flags.DEFINE_integer('max_degree', 3, 'Maximum Chebyshev polynomial degree.')
 
 # Load data
 
@@ -60,11 +63,11 @@ def loadRedditFromG(dataset_dir, inputfile):
     return sp.csr_matrix(adj), sp.lil_matrix(feats), train_labels, val_labels, test_labels, train_index, val_index, test_index
 
 
-def loadRedditFromNPZ(dataset_dir):
-    adj = sp.load_npz(dataset_dir+"reddit_adj.npz")
-    data = np.load(dataset_dir+"reddit.npz")
+def loadDataFromNPZ(dataset_dir, graph_name):
+    adj = sp.load_npz(dataset_dir+f"{graph_name}_adj.npz")
+    data = np.load(dataset_dir+f"{graph_name}.npz")
 
-    return adj, data['feats'], data['y_train'], data['y_val'], data['y_test'], data['train_index'], data['val_index'], data['test_index']
+    return adj, data['feats'], data['y_train'], data['y_val'], data['y_test'], data['train_index'], data['val_index'], data['test_index'], data['n_classes']
 
 
 def transferRedditDataFormat(dataset_dir, output_file):
@@ -103,49 +106,64 @@ def transferRedditDataFormat(dataset_dir, output_file):
 
 def transferLabel2Onehot(labels, N):
     y = np.zeros((len(labels), N))
-    for i in range(len(labels)):
-        pos = labels[i]
-        y[i, pos] = 1
+    labels[np.isnan(labels)] = 0
+    labels = labels.astype(int)
+    y[np.arange(labels.size), labels] = 1
     return y
 
 
-def main(rank1, rank0, with_prob):
+def main(rank1, rank0, with_prob, args):
 
     # config = tf.ConfigProto(device_count={"CPU": 4}, # limit to num_cpu_core CPU usage
     #                 inter_op_parallelism_threads = 1,
     #                 intra_op_parallelism_threads = 4,
     #                 log_device_placement=False)
-    adj, features, y_train, y_val, y_test, train_index, val_index, test_index = loadRedditFromNPZ(
-        "data/reddit/")
+    if args.dataset == 'products':
+        adj, features, y_train, y_val, y_test, train_index, val_index, test_index, n_classes = loadDataFromNPZ(
+            "data/products/", 'ogbn-products')
+    elif args.dataset == 'papers':
+        adj, features, y_train, y_val, y_test, train_index, val_index, test_index, n_classes = loadDataFromNPZ(
+            "data/papers/", 'ogbn-papers100M')
+    elif args.dataset == 'friendster':
+        adj, features, y_train, y_val, y_test, train_index, val_index, test_index, n_classes = loadDataFromNPZ(
+            "data/friendster/", 'friendster')
     print("adjcent matrix shape:", adj.shape)
     print("num of edges:", len(adj.row))
     print("train samples:", len(train_index))
     print("validation samples:", len(val_index))
     print("test samples:", len(test_index))
-    adj = adj+adj.T
+    # adj = adj+adj.T
+    print('converting scipy coo matrix to csr')
+    adj = adj.tocsr()
 
-    y_train = transferLabel2Onehot(y_train, 41)
-    y_val = transferLabel2Onehot(y_val, 41)
-    y_test = transferLabel2Onehot(y_test, 41)
+    print('tranfering label to one hot')
+    y_train = transferLabel2Onehot(y_train, n_classes)
+    y_val = transferLabel2Onehot(y_val, n_classes)
+    # y_test = transferLabel2Onehot(y_test, n_classes)
 
-    features = sp.lil_matrix(features)
+    # print('converting features to scipy lil matrix')
+    # features = sp.lil_matrix(features)
 
     adj_train = adj[train_index, :][:, train_index]
+    adj_val = adj[val_index, :][:, val_index]
 
     numNode_train = adj_train.shape[0]
+    numNode_val = adj_val.shape[0]
 
     train_mask = np.ones((numNode_train,))
-    val_mask = np.ones((y_val.shape[0],))
-    test_mask = np.ones((y_test.shape[0],))
+    val_mask = np.ones((numNode_val,))
+    # test_mask = np.ones((y_test.shape[0],))
 
     # print("numNode", numNode)
 
     # Some preprocessing
-    features = nontuple_preprocess_features(features).todense()
+    # features = nontuple_preprocess_features(features).todense()
     train_features = features[train_index]
+    val_features = features[val_index]
 
     if FLAGS.model == 'gcn_appr':
         normADJ_train = nontuple_preprocess_adj(adj_train)
+        normADJ_val = nontuple_preprocess_adj(adj_val)
         normADJ = nontuple_preprocess_adj(adj)
         # normADJ_val = nontuple_preprocess_adj(adj_val)
         # normADJ_test = nontuple_preprocess_adj(adj_test)
@@ -187,14 +205,13 @@ def main(rank1, rank0, with_prob):
     saver = tf.train.Saver()
 
     cost_val = []
-
-    p0 = column_prop(normADJ_train)
+    acc_val = []
 
     # testSupport = [sparse_to_tuple(normADJ), sparse_to_tuple(normADJ)]
-    valSupport = [sparse_to_tuple(
-        normADJ), sparse_to_tuple(normADJ[val_index, :])]
-    testSupport = [sparse_to_tuple(
-        normADJ), sparse_to_tuple(normADJ[test_index, :])]
+    # valSupport = [sparse_to_tuple(
+    #     normADJ), sparse_to_tuple(normADJ[val_index, :])]
+    # testSupport = [sparse_to_tuple(
+    #     normADJ), sparse_to_tuple(normADJ[test_index, :])]
 
     if with_prob:
         print('Importance Sampling...')
@@ -203,59 +220,38 @@ def main(rank1, rank0, with_prob):
 
     t = time.time()
     maxACC = 0.0
-    time_list = []
+    sample_time_list = []
+    epoch_time_list = []
     # Train model
     for epoch in range(FLAGS.epochs):
-        epoch_sampling_time = 0
+        sample_time = 0
 
         t1 = time.time()
 
-        n = 0
-        for batch in iterate_minibatches_listinputs([normADJ_train, y_train, train_mask], batchsize=1024, shuffle=True):
+        for batch in tqdm(iterate_minibatches_listinputs([normADJ_train, y_train, train_mask], batchsize=args.batchsize, shuffle=True)):
             [normADJ_batch, y_train_batch, train_mask_batch] = batch
             if sum(train_mask_batch) < 1:
                 continue
 
             start = time.time()
 
-            if with_prob:
-                p1 = column_prop(normADJ_batch)
-                q1 = np.random.choice(np.arange(numNode_train),
-                                      rank1, replace=False, p=p1)  # top layer
-                # q0 = np.random.choice(np.arange(numNode_train), rank0, p=p0)  # bottom layer
-                support1 = sparse_to_tuple(normADJ_batch[:, q1].dot(
-                    sp.diags(1.0 / (p1[q1] * rank1))))
+            p1 = column_prop(normADJ_batch)
+            q1 = np.random.choice(np.arange(numNode_train),
+                                  rank1, replace=False, p=p1)  # top layer
+            # q0 = np.random.choice(np.arange(numNode_train), rank0, p=p0)  # bottom layer
+            support1 = sparse_to_tuple(normADJ_batch[:, q1].dot(
+                sp.diags(1.0 / (p1[q1] * rank1))))
 
-                p2 = column_prop(normADJ_train[q1, :])
-                q0 = np.random.choice(np.arange(numNode_train),
-                                      rank0, replace=False, p=p2)
+            p2 = column_prop(normADJ_train[q1, :])
+            q0 = np.random.choice(np.arange(numNode_train),
+                                  rank0, replace=False, p=p2)
 
-                support0 = sparse_to_tuple(normADJ_train[q1, :][:, q0])
-                # selected nodes for approximation
-                features_inputs = np.diag(
-                    1.0 / (p2[q0] * rank0)).dot(train_features[q0, :])
-            else:
-                distr = np.nonzero(np.sum(normADJ_batch, axis=0))[1]
-                if rank1 > len(distr):
-                    q1 = distr
-                else:
-                    q1 = np.random.choice(
-                        distr, rank1, replace=False)  # top layer
-                distr0 = np.nonzero(np.sum(normADJ_train[q1, :], axis=0))[1]
-                if rank0 > len(distr0):
-                    q0 = distr0
-                else:
-                    q0 = np.random.choice(
-                        distr0, rank0, replace=False)  # top layer
+            support0 = sparse_to_tuple(normADJ_train[q1, :][:, q0])
+            # selected nodes for approximation
+            features_inputs = np.diag(
+                1.0 / (p2[q0] * rank0)).dot(train_features[q0, :])
 
-                support1 = sparse_to_tuple(normADJ_batch[:, q1].dot(
-                    sp.diags(1.0 / (p0[q1] * rank1))))
-                support0 = sparse_to_tuple(normADJ_train[q1, :][:, q0])
-                # selected nodes for approximation
-                features_inputs = np.diag(
-                    1.0 / (p0[q0] * rank0)).dot(train_features[q0, :])
-
-            epoch_sampling_time += time.time() - start
+            sample_time += time.time() - start
 
             # Construct feed dictionary
             feed_dict = construct_feed_dict(features_inputs, [support0, support1], y_train_batch, train_mask_batch,
@@ -265,44 +261,78 @@ def main(rank1, rank0, with_prob):
             # Training step
             outs = sess.run([model.opt_op, model.loss,
                             model.accuracy], feed_dict=feed_dict)
-            n = n+1
-
-        time_list.append(epoch_sampling_time)
 
         # Validation
-        cost, acc, duration = evaluate(
-            features, valSupport, y_val, val_mask, placeholders)
-        cost_val.append(cost)
+        for batch in tqdm(iterate_minibatches_listinputs([normADJ_val, y_val, val_mask], batchsize=args.batchsize, shuffle=True)):
+            [normADJ_batch, y_val_batch, val_mask_batch] = batch
+            if sum(val_mask_batch) < 1:
+                continue
 
-        if epoch > 50 and acc > maxACC:
-            maxACC = acc
-            save_path = saver.save(sess, "tmp/tmp_redditModel.ckpt")
+            start = time.time()
+
+            p1 = column_prop(normADJ_batch)
+            q1 = np.random.choice(np.arange(numNode_val),
+                                  rank1, replace=False, p=p1)  # top layer
+            support1 = sparse_to_tuple(normADJ_batch[:, q1].dot(
+                sp.diags(1.0 / (p1[q1] * rank1))))
+
+            p2 = column_prop(normADJ_val[q1, :])
+            q0 = np.random.choice(np.arange(numNode_val),
+                                  rank0, replace=False, p=p2)
+
+            support0 = sparse_to_tuple(normADJ_val[q1, :][:, q0])
+            # selected nodes for approximation
+            features_inputs = np.diag(
+                1.0 / (p2[q0] * rank0)).dot(val_features[q0, :])
+
+            sample_time += time.time() - start
+
+            # Construct feed dictionary
+            feed_dict = construct_feed_dict(features_inputs, [support0, support1], y_val_batch, val_mask_batch,
+                                            placeholders)
+
+            # Evaluating step
+            cost, acc = sess.run(
+                [model.loss, model.accuracy], feed_dict=feed_dict)
+            cost_val.append(cost)
+            acc_val.append(acc)
+        # cost, acc, duration = evaluate(
+        #     features, valSupport, y_val, val_mask, placeholders)
+
+        sample_time_list.append(sample_time)
+        epoch_time_list.append(time.time() - t1)
+
+        # if epoch > 50 and acc > maxACC:
+        #     maxACC = acc
+        #     save_path = saver.save(sess, "tmp/tmp_redditModel.ckpt")
 
         # Print results
-        print("Epoch:", '%04d' % (epoch + 1), "train_loss=", "{:.5f}".format(outs[1]),
-              "train_acc=", "{:.5f}".format(
-                  outs[2]), "val_loss=", "{:.5f}".format(cost),
-              "val_acc=", "{:.5f}".format(
-                  acc), "time per epoch=", "{:.5f}".format(time.time() - t1),
-              "epoch sampling time=", epoch_sampling_time)
+        print("Epoch:", '%04d' % (epoch + 1),
+              "train_loss=", "{:.5f}".format(outs[1]),
+              "train_acc=", "{:.5f}".format(outs[2]),
+              "val_loss=", "{:.5f}".format(np.mean(cost_val)),
+              "val_acc=", "{:.5f}".format(np.mean(acc_val)),
+              "time per epoch=", "{:.5f}".format(epoch_time_list[-1]),
+              "epoch sampling time=", "{:.5f}".format(sample_time_list[-1]))
 
-        if epoch > FLAGS.early_stopping and np.mean(cost_val[-2:]) > np.mean(cost_val[-(FLAGS.early_stopping + 1):-1]):
-            print("Early stopping...")
-            break
+        # if epoch > FLAGS.early_stopping and np.mean(cost_val[-2:]) > np.mean(cost_val[-(FLAGS.early_stopping + 1):-1]):
+        #     print("Early stopping...")
+        #     break
 
-    print('Average epoch sampling time:', np.mean(time_list[3:]))
+    print('Average epoch e2e time:', np.mean(epoch_time_list))
+    print('Average epoch sampling time:', np.mean(sample_time_list))
 
-    train_duration = time.time() - t
+    # train_duration = time.time() - t
     # Testing
-    if os.path.exists("tmp/tmp_redditModel.ckpt"):
-        saver.restore(sess, "tmp/tmp_redditModel.ckpt")
-    test_cost, test_acc, test_duration = evaluate(features, testSupport, y_test, test_mask,
-                                                  placeholders)
-    print("rank1 = {}".format(rank1), "rank0 = {}".format(rank0), "cost=", "{:.5f}".format(test_cost),
-          "accuracy=", "{:.5f}".format(
-              test_acc), "training time=", "{:.5f}".format(train_duration),
-          "epoch = {}".format(epoch + 1),
-          "test time=", "{:.5f}".format(test_duration))
+    # if os.path.exists("tmp/tmp_redditModel.ckpt"):
+    #     saver.restore(sess, "tmp/tmp_redditModel.ckpt")
+    # test_cost, test_acc, test_duration = evaluate(features, testSupport, y_test, test_mask,
+    #                                               placeholders)
+    # print("rank1 = {}".format(rank1), "rank0 = {}".format(rank0), "cost=", "{:.5f}".format(test_cost),
+    #       "accuracy=", "{:.5f}".format(
+    #           test_acc), "training time=", "{:.5f}".format(train_duration),
+    #       "epoch = {}".format(epoch + 1),
+    #       "test time=", "{:.5f}".format(test_duration))
 
 
 def transferG2ADJ():
@@ -323,7 +353,14 @@ def transferG2ADJ():
 
 if __name__ == "__main__":
     # transferRedditDataFormat("reddit/","data/reddit.npz")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default='products', choices=['products', 'papers', 'friendster'],
+                        help="which dataset to load for training")
+    parser.add_argument("--batchsize", type=int, default=1024,
+                        help="batch size for training")
+    args = parser.parse_args()
+    print(args)
 
-    main(200, 200, True)
+    main(1000, 1000, True, args)
     # for k in [50, 100, 200, 400]:
     #     main(100, k)

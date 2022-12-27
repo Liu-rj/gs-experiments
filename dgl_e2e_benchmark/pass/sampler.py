@@ -6,6 +6,8 @@ from dgl import to_block
 from dgl.dataloading import BlockSampler
 from dgl.utils import gather_pinned_tensor_rows
 
+_DCSR = 16
+_DCSC = 8
 _CSR = 4
 _CSC = 2
 _COO = 1
@@ -116,7 +118,7 @@ def matrix_sampler_coo(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_
     for fanout in fanouts:
         subg = A._graph._CAPI_slicing(seeds, 0, _CSC, _COO)
         neighbors = subg._CAPI_get_valid_rows()
-        subg = subg._CAPI_slicing(neighbors, 1, _CSR, _COO)
+        subg = subg._CAPI_slicing(neighbors, 1, _DCSR, _COO)
         subA = gs.Matrix(subg)
         if use_uva:
             u_feats = gather_pinned_tensor_rows(features, neighbors)
@@ -136,12 +138,10 @@ def matrix_sampler_coo(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample_
         att = torch.cat([att1, att2, att3], dim=1)
         att = F.relu(att @ F.softmax(sample_a, dim=0))
         att = att + 10e-10 * torch.ones_like(att)
-        subA.set_data(att)
-        # print("subA before "subA._graph._CAPI_metadata())
+        subA._graph._CAPI_set_data(att)
         subg = subA._graph._CAPI_sampling_with_probs(
             0, att, fanout, True, _CSC, _COO)
         subA = gs.Matrix(subg)
-        # print(subA._graph._CAPI_metadata())
         ret_loss_tuple = (subA._graph._CAPI_get_data('default'), subA._graph._CAPI_get_coo_rows(
             True), seeds.numel(), fanout)
         block = subA.to_dgl_block()
@@ -178,12 +178,10 @@ def matrix_sampler_best(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sample
         att = torch.cat([att1, att2, att3], dim=1)
         att = F.relu(att @ F.softmax(sample_a, dim=0))
         att = att + 10e-10 * torch.ones_like(att)
-        subA.set_data(att)
-        # print("subA before "subA._graph._CAPI_metadata())
+        subA._graph._CAPI_set_data(att)
         subg = subA._graph._CAPI_sampling_with_probs(
             0, att, fanout, True, _CSC, _CSC)
         subA = gs.Matrix(subg)
-        # print(subA._graph._CAPI_metadata())
         ret_loss_tuple = (subA._graph._CAPI_get_data('default'), subA._graph._CAPI_get_coo_rows(
             True), seeds.numel(), fanout)
         block = subA.to_dgl_block()
@@ -233,12 +231,10 @@ def matrix_sampler_coo_full(A: gs.Matrix, seeds, fanouts, features, W_1, W_2, sa
         att = torch.cat([att1, att2, att3], dim=1)
         att = F.relu(att @ F.softmax(sample_a, dim=0))
         att = att + 10e-10 * torch.ones_like(att)
-        subA.set_data(att)
-        # print("subA before "subA._graph._CAPI_metadata())
+        subA._graph._CAPI_set_data(att)
         subg = subA._graph._CAPI_full_sampling_with_probs(
             0, att, fanout, True, _CSC)
         subA = gs.Matrix(subg)
-        # print(subA._graph._CAPI_metadata())
         ret_loss_tuple = (subA._graph._CAPI_get_data('default'), subA._graph._CAPI_get_coo_rows(
             True), seeds.numel(), fanout)
         block = subA.full_to_dgl_block(seeds)
