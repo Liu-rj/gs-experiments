@@ -399,3 +399,50 @@ def asgcn_matrix_sampler_with_format_selection_coo_full(
         blocks.insert(0, block)
     input_nodes = seeds
     return input_nodes, output_nodes, blocks
+
+
+def asgcn_matrix_sampler_with_format_selection_best_relabel(A: gs.Matrix, seeds,
+                                                            features, W, fanouts,
+                                                            use_uva):
+    graph = A._graph
+    output_nodes = seeds
+    blocks = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO, True)
+        p = subg._CAPI_sum(1, 2, _COO)
+        p = p.sqrt()
+        row_indices = subg._CAPI_get_rows()
+        num_pick = np.min([row_indices.numel(), fanout])
+        if use_uva:
+            node_feats_u = gather_pinned_tensor_rows(features, row_indices)
+            node_feats_v = gather_pinned_tensor_rows(features, seeds)
+        else:
+            node_feats_u = features[row_indices]
+            node_feats_v = features[seeds]
+        h_u = node_feats_u @ W[:, 0]
+        h_v = node_feats_v @ W[:, 1]
+        h_v_sum = torch.sum(h_v)
+        attention = torch.flatten((relu(h_u + h_v_sum) + 1) / fanout)
+        g_u = torch.flatten(relu(h_u) + 1)
+
+        q = normalize(p * attention * g_u, p=1.0, dim=0)
+
+        idx = torch.multinomial(q, num_pick, replacement=False)
+
+        subg = subg._CAPI_slicing(idx, 1, _COO, _COO, False)
+        W_tilde = gs.ops.u_add_v(gs.Matrix(subg), h_u[idx], h_v, _COO)
+        W_tilde = (relu(W_tilde) + 1) / idx.numel()
+        W_tilde = gs.ops.e_div_u(gs.Matrix(subg), W_tilde, q[idx], _COO)
+        subg._CAPI_set_data(W_tilde * subg._CAPI_get_data('default'))
+        u_sum = subg._CAPI_sum(1, 1, _COO)
+        u_all = torch.zeros(A.get_num_rows(),
+                            dtype=torch.float32,
+                            device='cuda')
+        u_all[row_indices[idx]] = u_sum
+
+        block = gs.Matrix(subg).to_dgl_block()
+        block.srcdata['u_sum'] = u_all[block.srcdata['_ID']]
+        seeds = block.srcdata['_ID']
+        blocks.insert(0, block)
+    input_nodes = seeds
+    return input_nodes, output_nodes, blocks

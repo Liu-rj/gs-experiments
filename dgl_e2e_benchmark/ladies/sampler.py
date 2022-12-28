@@ -98,6 +98,7 @@ class LADIESSamplerRelabel(dgl.dataloading.BlockSampler):
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         blocks = []
         output_nodes = seed_nodes
+        torch.cuda.nvtx.range_push('sampling')
         for fanout in self.fanouts:
             subg = dgl.in_subgraph(g, seed_nodes, relabel_nodes=True)
             edges = subg.edges()
@@ -125,6 +126,7 @@ class LADIESSamplerRelabel(dgl.dataloading.BlockSampler):
             block.edata[self.output_weight] = W_tilde[block.edata[dgl.EID]]
             seed_nodes = subg.ndata[dgl.NID][block.srcdata[dgl.NID]]
             blocks.insert(0, block)
+        torch.cuda.nvtx.range_pop()
         input_nodes = seed_nodes
         return input_nodes, output_nodes, blocks
 
@@ -227,6 +229,29 @@ def ladies_matrix_sampler_with_format_selection_coo_full(
         subg = subg._CAPI_full_divide(probs, 1, _CSR)
         subg = subg._CAPI_full_normalize(0, _CSC)
         block = gs.Matrix(subg).full_to_dgl_block(seeds)
+        seeds = block.srcdata['_ID']
+        ret.insert(0, block)
+    input_node = seeds
+    return input_node, output_node, ret
+
+
+def ladies_matrix_sampler_with_format_selection_best_relabel(P: gs.Matrix, seeds,
+                                                     fanouts):
+    graph = P._graph
+    output_node = seeds
+    ret = []
+    for fanout in fanouts:
+        subg = graph._CAPI_slicing(seeds, 0, _CSC, _COO, True)
+        probs = subg._CAPI_sum(1, 2, _COO)
+        num_pick = np.min([probs.numel(), fanout])
+        idx = torch.multinomial(probs, num_pick, replacement=False)
+        relabel_seeds_nodes = torch.ops.gs_ops.index_search(
+                subg._CAPI_get_rows(), seeds)
+        nodes = torch.cat((relabel_seeds_nodes, idx)).unique()  # add self-loop
+        subg = subg._CAPI_slicing(nodes, 1, _COO, _COO, False)
+        subg = subg._CAPI_divide(probs[nodes], 1, _COO)
+        subg = subg._CAPI_normalize(0, _COO)
+        block = gs.Matrix(subg).to_dgl_block()
         seeds = block.srcdata['_ID']
         ret.insert(0, block)
     input_node = seeds

@@ -40,15 +40,15 @@ def train(dataset, args):
         features, labels = features.to(device), labels.to(device)
         adj_weight = adj_weight.to(device)
     m = gs.Matrix(gs.Graph(False))
-    # m._graph._CAPI_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_full_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_set_data(adj_weight, 'col')
+    m._graph._CAPI_load_csc(csc_indptr, csc_indices)
+    # m._graph._CAPI_full_load_csc(csc_indptr, csc_indices)
+    m._graph._CAPI_set_data(adj_weight)
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
     # compiled_func = gs.jit.compile(
     #     func=fastgcn_sampler, args=(m, torch.Tensor(), fanouts))
     # compiled_func.gm = dce(slicing_and_sampling_fuse(compiled_func.gm))
-    compiled_func = asgcn_matrix_sampler_with_format_selection_coo_full
+    compiled_func = asgcn_matrix_sampler_with_format_selection_best_relabel
     train_seedloader = SeedGenerator(
         train_nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
     val_seedloader = SeedGenerator(
@@ -189,7 +189,7 @@ if __name__ == '__main__':
                         help="Wether to use UVA to sample graph and load feature")
     parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m'],
                         help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=256,
+    parser.add_argument("--batchsize", type=int, default=1024,
                         help="batch size for training")
     parser.add_argument("--samples", default='2000,2000',
                         help="sample size for each layer")
