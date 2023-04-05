@@ -110,11 +110,9 @@ def sample_w_o_relabel(P: gs.Matrix, fanouts, seeds, seeds_ptr):
             seeds, seeds_ptr, coo_col, coo_row, coo_ptr)
         seedst = torch.ops.gs_ops.SplitByOffset(seeds, seeds_ptr)
         unit = torch.ops.gs_ops.SplitByOffset(unique_tensor, unique_tensor_ptr)
-        colt = torch.ops.gs_ops.SplitByOffset(sub_coo_col, coo_ptr)
-        rowt = torch.ops.gs_ops.SplitByOffset(sub_coo_row, coo_ptr)
-        eweight = torch.ops.gs_ops.SplitByOffset(
-            subg._CAPI_get_data('default'), coo_ptr)
-        blocks.insert(0, (seedst, unit, colt, rowt, eweight))
+        colt = torch.ops.gs_ops.SplitByOffset(sub_coo_col, sub_coo_ptr)
+        rowt = torch.ops.gs_ops.SplitByOffset(sub_coo_row, sub_coo_ptr)
+        blocks.insert(0, (seedst, unit, colt, rowt))
 
         seeds, seeds_ptr = unique_tensor, unique_tensor_ptr
     input_node = seeds
@@ -239,7 +237,7 @@ def train(dataset, args):
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
     n_epoch = 6
-    benchmark(args, m, train_nid, fanouts, n_epoch, sample_w_o_relabel)
+    # benchmark(args, m, train_nid, fanouts, n_epoch, sample_w_o_relabel)
     benchmark(args, m, train_nid, fanouts, n_epoch, sample_w_relabel)
     # benchmark(args, m, train_nid, fanouts, n_epoch, sample_mixed_relabel)
 
