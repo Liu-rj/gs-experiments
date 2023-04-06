@@ -9,19 +9,29 @@ import tqdm
 import argparse
 
 
-def sample_w_o_relabel(P: gs.Matrix, fanouts, seeds):
+def sample_w_o_relabel(P: gs.Matrix, fanouts, seeds, seeds_ptr):
     graph = P._graph
     output_node = seeds
     blocks = []
     for fanout in fanouts:
         subg = graph._CAPI_fused_columnwise_slicing_sampling(
             seeds, fanout, False)
-        all_nodes = torch.cat([seeds, subg._CAPI_get_coo_rows(False)])
-        seeds = torch.ops.gs_ops._CAPI_unique(all_nodes)
-    subg = graph._CAPI_fusion_slicing(seeds, seeds)
-    # subg = graph._CAPI_slicing(seeds, 0, gs._CSC, gs._CSC, False)
-    # subg = subg._CAPI_slicing(seeds, 1, gs._CSC, gs._CSC, False)
-    unique_tensor, num_row, num_col, format_tensor1, format_tensor2, e_ids, format = subg._CAPI_relabel()
+        indptr, indices, eid = subg._CAPI_get_csc()
+        indices_ptr = indptr[seeds_ptr]
+        all_nodes, key, ptr = torch.ops.gs_ops.BatchConcat(
+            [seeds, subg._CAPI_get_coo_rows(False)], [seeds_ptr, indices_ptr])
+        seeds, seeds_ptr, key = torch.ops.gs_ops.BatchUniqueByKey2(
+            all_nodes, ptr, key)
+    subg = graph._CAPI_batch_fusion_slicing(seeds, seeds_ptr, seeds, seeds_ptr)
+    indptr, indices, eid = subg._CAPI_get_csc()
+    indices_ptr = indptr[seeds_ptr]
+    unique_tensor, unique_tensor_ptr, indices, indices_ptr = torch.ops.gs_ops.BatchCSRRelabel(
+        seeds, seeds_ptr, indices, indices_ptr)
+    seeds, seeds_ptr = unique_tensor, unique_tensor_ptr
+    seedst = torch.ops.gs_ops.SplitByOffset(seeds, seeds_ptr)
+    unit = torch.ops.gs_ops.SplitByOffset(unique_tensor, unique_tensor_ptr)
+    indicest = torch.ops.gs_ops.SplitByOffset(indices, indices_ptr)
+    blocks.insert(0, (seedst, unit, indicest))
     input_node = seeds
     return input_node, output_node, blocks
 
@@ -29,8 +39,14 @@ def sample_w_o_relabel(P: gs.Matrix, fanouts, seeds):
 def benchmark(args, matrix, nid, fanouts, n_epoch, sampler):
     print('####################################################{}'.format(
         sampler.__name__))
+    batch_size = args.batching_batchsize
+    small_batch_size = args.batchsize
+    num_batches = int((batch_size + small_batch_size - 1) / small_batch_size)
+    orig_seeds_ptr = torch.arange(
+        num_batches + 1, dtype=torch.int64, device='cuda') * small_batch_size
+
     seedloader = SeedGenerator(
-        nid, batch_size=args.batchsize, shuffle=True, drop_last=False)
+        nid, batch_size=batch_size, shuffle=True, drop_last=False)
 
     epoch_time = []
     mem_list = []
@@ -43,8 +59,16 @@ def benchmark(args, matrix, nid, fanouts, n_epoch, sampler):
         torch.cuda.synchronize()
         start = time.time()
         for it, seeds in enumerate(tqdm.tqdm(seedloader)):
+            seeds_ptr = orig_seeds_ptr
+            if it == len(seedloader) - 1:
+                num_batches = int(
+                    (seeds.numel() + small_batch_size - 1) / small_batch_size)
+                seeds_ptr = torch.arange(num_batches + 1,
+                                         dtype=torch.int64,
+                                         device='cuda') * small_batch_size
+                seeds_ptr[-1] = seeds.numel()
             input_nodes, output_nodes, blocks = sampler(
-                matrix, fanouts, seeds)
+                matrix, fanouts, seeds, seeds_ptr)
 
         torch.cuda.synchronize()
         epoch_time.append(time.time() - start)
@@ -69,8 +93,6 @@ def train(dataset, args):
     g = g.long()
     train_nid = splitted_idx['train']
     g, train_nid = g.to(device), train_nid.to('cuda')
-    # weight = normalized_laplacian_edata(g)
-    weight = torch.ones(g.num_edges(), dtype=torch.float32, device=g.device)
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
     if use_uva and device == 'cpu':
         csc_indptr = csc_indptr.pin_memory()
@@ -92,6 +114,8 @@ if __name__ == '__main__':
     parser.add_argument("--dataset", default='ogbn-products',
                         help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=512,
+                        help="batch size for training")
+    parser.add_argument("--batching-batchsize", type=int, default=5120,
                         help="batch size for training")
     parser.add_argument("--samples", default='10,10',
                         help="sample size for each layer")
