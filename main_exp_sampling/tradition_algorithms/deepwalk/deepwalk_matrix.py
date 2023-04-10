@@ -100,7 +100,7 @@ def benchmark_w_o_relabel(args, matrix, nid):
     print('####################################################DGL deepwalk')
     # sampler = DeepWalkSampler(args.walk_length)
     print("train id size:",len(nid))
-    batch_size = 65536
+    batch_size = 1280
     seedloader = SeedGenerator(
         nid, batch_size=batch_size, shuffle=True, drop_last=False)
     fanouts = [int(x.strip()) for x in args.samples.split(',')]
@@ -130,7 +130,7 @@ def benchmark_w_o_relabel(args, matrix, nid):
             if it == len(seedloader) - 1:
                 num_batches = int((seeds.numel() + small_batch_size - 1) / small_batch_size)
             paths = matrix_batch_sampler_deepwalk(matrix, seeds, args.walk_length)
-            # split_paths = torch.tensor_split(paths,num_batches)
+            split_paths = torch.tensor_split(paths,num_batches)
             # print(len(split_paths))
             # print(split_paths[0].shape)
             # print(len(ptrts[0][0]),len(indts[0][0]))
