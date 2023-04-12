@@ -222,10 +222,10 @@ def train(dataset, args):
         features = features.to(device)
 
     n_epoch = 6
-    # benchmark_w_o_relabel(args, g, train_nid, fanouts,
-    #                       n_epoch, features, W1, W2, Wa)
-    benchmark_w_relabel(args, g, train_nid, fanouts,
-                        n_epoch, features, W1, W2, Wa)
+    benchmark_w_o_relabel(args, g, train_nid, fanouts,
+                          n_epoch, features, W1, W2, Wa)
+    # benchmark_w_relabel(args, g, train_nid, fanouts,
+    #                     n_epoch, features, W1, W2, Wa)
 
 
 if __name__ == '__main__':
