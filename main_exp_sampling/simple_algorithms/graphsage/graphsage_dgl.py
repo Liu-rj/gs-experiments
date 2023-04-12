@@ -148,7 +148,7 @@ def benchmark_w_o_relabel(args, g, nid):
         for it, seeds in enumerate(tqdm.tqdm(seedloader)):
             seeds = seeds.to('cuda')
             input_nodes, output_nodes, blocks = sampler.sample_blocks(g, seeds)
-            print("input nodes:",len(input_nodes))
+            # print("input nodes:",len(input_nodes))
             # print(len(ptrts[0][0]),len(indts[0][0]))
             # print(len(ptrts[1][0]),len(indts[1][0]))
 

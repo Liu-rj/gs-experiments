@@ -100,7 +100,7 @@ def benchmark_w_o_relabel(args, matrix, nid):
     print('####################################################DGL deepwalk')
     # sampler = DeepWalkSampler(args.walk_length)
     print("train id size:",len(nid))
-    batch_size = 1280
+    batch_size = args.big_batch
     seedloader = SeedGenerator(
         nid, batch_size=batch_size, shuffle=True, drop_last=False)
     fanouts = [int(x.strip()) for x in args.samples.split(',')]
@@ -185,9 +185,9 @@ def load(dataset,args):
         g = g.long()
         train_nid = train_nid.long()
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
-    train_nid = train_nid.int()
-    csc_indptr = csc_indptr.int()
-    csc_indices = csc_indices.int()
+    # train_nid = train_nid.int()
+    # csc_indptr = csc_indptr.int()
+    # csc_indices = csc_indices.int()
     if use_uva and device == 'cpu':
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
@@ -229,6 +229,8 @@ if __name__ == '__main__':
     parser.add_argument("--samples",
                         default='25,10',
                         help="sample size for each layer")
+    parser.add_argument("--big-batch", type=int, default=1280,
+                        help="big batch")
     args = parser.parse_args()
     print('Loading data')
     if args.dataset == 'products':
