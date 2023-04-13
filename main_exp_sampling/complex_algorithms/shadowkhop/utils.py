@@ -581,6 +581,7 @@ def from_dgl(
 
     if g.is_homogeneous:
         data = Data()
+        data.num_nodes = g.num_nodes()
         data.edge_index = torch.stack(g.edges(), dim=0)
 
         for attr, value in g.ndata.items():
