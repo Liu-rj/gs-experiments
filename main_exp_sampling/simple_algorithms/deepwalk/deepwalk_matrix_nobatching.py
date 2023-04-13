@@ -169,9 +169,6 @@ def load(dataset,args):
         g = g.long()
         train_nid = train_nid.long()
     csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
-    train_nid = train_nid.int()
-    csc_indptr = csc_indptr.int()
-    csc_indices = csc_indices.int()
         # g = g.formats("csc")
     if use_uva and device == 'cpu':
         csc_indptr = csc_indptr.pin_memory()

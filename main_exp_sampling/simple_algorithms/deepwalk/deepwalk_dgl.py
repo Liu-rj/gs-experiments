@@ -28,7 +28,6 @@ def load_ogbn_products():
     # print("before:",g)
     g = dgl.remove_self_loop(g)
     g = dgl.add_self_loop(g)
-    torch.save(splitted_idx['train'],"")
     # print("after:",g)
     # sp.save_npz("/home/ubuntu/data/products_adj.npz", g.adj(scipy_fmt='coo'))
     return g, feat, labels, n_classes, splitted_idx
@@ -215,7 +214,7 @@ if __name__ == '__main__':
                         help="numbers of epoch in training")
     parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained','matrix-fused','matrix-nonfused'],
                         help="sample mode")
-    parser.add_argument("--data-type", default='int', choices=['int', 'long'],
+    parser.add_argument("--data-type", default='long', choices=['int', 'long'],
                         help="data type")
     parser.add_argument("--walk-length", type=int, default=80,
                         help="random walk walk length")
