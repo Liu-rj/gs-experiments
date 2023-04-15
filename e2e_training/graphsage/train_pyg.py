@@ -99,7 +99,7 @@ epoch_time = []
 cur_time = []
 acc_list = []
 start = time.time()
-n_epochs = 50
+n_epochs = 100
 for epoch in range(n_epochs):
     torch.cuda.synchronize()
     tic = time.time()

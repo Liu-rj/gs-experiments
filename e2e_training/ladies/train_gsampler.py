@@ -98,7 +98,7 @@ def train(dataset, args):
     A._CAPI_set_data(weight)
     print("Check load successfully:", A._CAPI_metadata(), "\n")
 
-    batch_size = 51200
+    batch_size = 12800
     small_batch_size = args.batchsize
     num_batches = int((batch_size + small_batch_size - 1) / small_batch_size)
     orig_seeds_ptr = (
@@ -113,7 +113,7 @@ def train(dataset, args):
     val_seedloader = SeedGenerator(
         val_nid, batch_size=batch_size, shuffle=True, drop_last=False
     )
-    model = GCNModel(features.shape[1], 256, n_classes, len(fanouts)).to("cuda")
+    model = SAGEModel(features.shape[1], 256, n_classes, len(fanouts)).to("cuda")
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     torch.cuda.synchronize()
@@ -294,7 +294,7 @@ if __name__ == "__main__":
         "--batchsize", type=int, default=512, help="batch size for training"
     )
     parser.add_argument(
-        "--samples", default="512,512,512,512,512", help="sample size for each layer"
+        "--samples", default="4000,4000,4000", help="sample size for each layer"
     )
     parser.add_argument(
         "--num-epoch", type=int, default=100, help="numbers of epoch in training"

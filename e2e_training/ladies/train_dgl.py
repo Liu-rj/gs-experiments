@@ -61,8 +61,8 @@ def train(dataset, args):
     W = normalized_laplacian_edata(g)
     g = g.formats("csc")
 
-    fanout = [512, 512, 512, 512, 512]
-    model = GCNModel(features.shape[1], 256, n_classes, len(fanout)).to("cuda")
+    fanout = [4000, 4000, 4000]
+    model = SAGEModel(features.shape[1], 256, n_classes, len(fanout)).to("cuda")
     sampler = LADIESSampler(fanout, weight="weight", out_weight="w", replace=False, W=W)
     train_dataloader = DataLoader(
         g,

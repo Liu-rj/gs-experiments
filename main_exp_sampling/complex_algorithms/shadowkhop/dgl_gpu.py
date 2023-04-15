@@ -56,7 +56,7 @@ def train(dataset, args):
     if args.use_uva and device == 'cpu':
         g.pin_memory_()
 
-    n_epoch = 6
+    n_epoch = 1
     benchmark(args, g, train_nid, fanouts, n_epoch)
 
 

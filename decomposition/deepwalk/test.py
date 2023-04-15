@@ -10,7 +10,7 @@ import argparse
 from sampler import *
 
 
-def benchmark_w_o_batching(args, matrix, nid, fanouts, n_epoch, sampler):
+def benchmark_w_o_batching(args, matrix, nid, num_step, n_epoch, sampler):
     print(
         "####################################################{}".format(
             sampler.__name__
@@ -33,7 +33,7 @@ def benchmark_w_o_batching(args, matrix, nid, fanouts, n_epoch, sampler):
         torch.cuda.synchronize()
         start = time.time()
         for it, seeds in enumerate(tqdm.tqdm(seedloader)):
-            input_nodes, output_nodes, blocks = sampler(matrix, fanouts, seeds)
+            path = sampler(matrix, seeds, num_step)
 
         torch.cuda.synchronize()
         epoch_time.append(time.time() - start)
@@ -53,19 +53,13 @@ def benchmark_w_o_batching(args, matrix, nid, fanouts, n_epoch, sampler):
     print("####################################################END")
 
 
-def benchmark_w_batching(args, matrix, nid, fanouts, n_epoch, sampler):
+def benchmark_w_batching(args, matrix, nid, num_step, n_epoch, sampler):
     print(
         "####################################################{}".format(
             sampler.__name__
         )
     )
     batch_size = args.batching_batchsize
-    small_batch_size = args.batchsize
-    num_batches = int((batch_size + small_batch_size - 1) / small_batch_size)
-    orig_seeds_ptr = (
-        torch.arange(num_batches + 1, dtype=torch.int64, device="cuda")
-        * small_batch_size
-    )
 
     seedloader = SeedGenerator(
         nid, batch_size=batch_size, shuffle=True, drop_last=False
@@ -83,19 +77,7 @@ def benchmark_w_batching(args, matrix, nid, fanouts, n_epoch, sampler):
         torch.cuda.synchronize()
         start = time.time()
         for it, seeds in enumerate(tqdm.tqdm(seedloader)):
-            seeds_ptr = orig_seeds_ptr
-            if it == len(seedloader) - 1:
-                num_batches = int(
-                    (seeds.numel() + small_batch_size - 1) / small_batch_size
-                )
-                seeds_ptr = (
-                    torch.arange(num_batches + 1, dtype=torch.int64, device="cuda")
-                    * small_batch_size
-                )
-                seeds_ptr[-1] = seeds.numel()
-            input_nodes, output_nodes, blocks = sampler(
-                matrix, fanouts, seeds, seeds_ptr
-            )
+            path = sampler(matrix, seeds, num_step)
 
         torch.cuda.synchronize()
         epoch_time.append(time.time() - start)
@@ -118,39 +100,25 @@ def benchmark_w_batching(args, matrix, nid, fanouts, n_epoch, sampler):
 def train(dataset, args):
     device = args.device
     use_uva = args.use_uva
-    fanouts = [int(x.strip()) for x in args.samples.split(",")]
+    fanouts = 80
 
     g, features, labels, n_classes, splitted_idx = dataset
     g = g.long()
     train_nid = splitted_idx["train"]
     g, train_nid = g.to(device), train_nid.to("cuda")
-    # weight = normalized_laplacian_edata(g)
-    weight = torch.ones(g.num_edges(), dtype=torch.float32, device=g.device)
     csc_indptr, csc_indices, edge_ids = g.adj_sparse("csc")
-    weight = weight[edge_ids].to(device)
     if use_uva and device == "cpu":
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
-        weight = weight.pin_memory()
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_set_data(weight)
     print("Check load successfully:", m._graph._CAPI_metadata(), "\n")
 
     n_epoch = 6
-    if args.dataset == 'ogbn-products':
-        benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, w_o_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_o_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_o_relabel_fusion)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_o_relabel_selection)
-    elif args.dataset == 'ogbn-papers100M':
-        benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, w_o_relabel)
-        benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, w_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_relabel_fusion)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_relabel_selection)
-    else:
-        raise NotImplementedError
+    benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, plain)
+    benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, plain)
+    benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, inter_step_fusion)
+    benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, inter_layer_fusion)
 
 
 if __name__ == "__main__":
@@ -171,13 +139,10 @@ if __name__ == "__main__":
         "--dataset", default="ogbn-products", help="which dataset to load for training"
     )
     parser.add_argument(
-        "--batchsize", type=int, default=512, help="batch size for training"
+        "--batchsize", type=int, default=128, help="batch size for training"
     )
     parser.add_argument(
-        "--batching-batchsize", type=int, default=12800, help="batch size for training"
-    )
-    parser.add_argument(
-        "--samples", default="4000,4000,4000", help="sample size for each layer"
+        "--batching-batchsize", type=int, default=5120, help="batch size for training"
     )
     args = parser.parse_args()
     print(args)

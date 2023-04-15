@@ -124,33 +124,19 @@ def train(dataset, args):
     g = g.long()
     train_nid = splitted_idx["train"]
     g, train_nid = g.to(device), train_nid.to("cuda")
-    # weight = normalized_laplacian_edata(g)
-    weight = torch.ones(g.num_edges(), dtype=torch.float32, device=g.device)
     csc_indptr, csc_indices, edge_ids = g.adj_sparse("csc")
-    weight = weight[edge_ids].to(device)
     if use_uva and device == "cpu":
         csc_indptr = csc_indptr.pin_memory()
         csc_indices = csc_indices.pin_memory()
-        weight = weight.pin_memory()
     m = gs.Matrix(gs.Graph(False))
     m._graph._CAPI_load_csc(csc_indptr, csc_indices)
-    m._graph._CAPI_set_data(weight)
     print("Check load successfully:", m._graph._CAPI_metadata(), "\n")
 
     n_epoch = 6
-    if args.dataset == 'ogbn-products':
-        benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, w_o_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_o_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_o_relabel_fusion)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_o_relabel_selection)
-    elif args.dataset == 'ogbn-papers100M':
-        benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, w_o_relabel)
-        benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, w_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_relabel)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_relabel_fusion)
-        benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batching_w_relabel_selection)
-    else:
-        raise NotImplementedError
+    benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, plain)
+    benchmark_w_o_batching(args, m, train_nid, fanouts, n_epoch, fusion)
+    benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batch)
+    benchmark_w_batching(args, m, train_nid, fanouts, n_epoch, batch_fusion)
 
 
 if __name__ == "__main__":
@@ -174,11 +160,9 @@ if __name__ == "__main__":
         "--batchsize", type=int, default=512, help="batch size for training"
     )
     parser.add_argument(
-        "--batching-batchsize", type=int, default=12800, help="batch size for training"
+        "--batching-batchsize", type=int, default=51200, help="batch size for training"
     )
-    parser.add_argument(
-        "--samples", default="4000,4000,4000", help="sample size for each layer"
-    )
+    parser.add_argument("--samples", default="25,10", help="sample size for each layer")
     args = parser.parse_args()
     print(args)
 

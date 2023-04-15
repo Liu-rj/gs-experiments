@@ -8,6 +8,20 @@ import time
 import tqdm
 import argparse
 import dgl
+import numba
+from numba.core import types
+from numba.typed import Dict
+
+
+@numba.njit
+def find_indices_in(a, b):
+    d = Dict.empty(key_type=types.int64, value_type=types.int64)
+    for i, v in enumerate(b):
+        d[v] = i
+    ai = np.zeros_like(a)
+    for i, v in enumerate(a):
+        ai[i] = d.get(v, -1)
+    return ai
 
 
 class PASSSampler(dgl.dataloading.BlockSampler):
@@ -87,8 +101,13 @@ class PASSSamplerRelabel(dgl.dataloading.BlockSampler):
             edges = subg.edges()
             nodes = torch.unique(edges[0])
             global_nid = subg.ndata[dgl.NID][nodes]
-            local_seeds_nid = torch.ops.gs_ops.index_search(
-                subg.ndata[dgl.NID], seed_nodes)
+            
+            if seed_nodes.device == torch.device('cuda:0'):
+                local_seeds_nid = torch.ops.gs_ops.index_search(
+                    subg.ndata[dgl.NID], seed_nodes)
+            else:
+                local_seeds_nid = find_indices_in(seed_nodes.numpy(), subg.ndata[dgl.NID].numpy())
+                local_seeds_nid = torch.from_numpy(local_seeds_nid)
 
             if self.use_uva:
                 u_feats = gather_pinned_tensor_rows(self.features, global_nid)
@@ -221,11 +240,13 @@ def train(dataset, args):
         g = g.to(device)
         features = features.to(device)
 
-    n_epoch = 6
-    benchmark_w_o_relabel(args, g, train_nid, fanouts,
-                          n_epoch, features, W1, W2, Wa)
-    # benchmark_w_relabel(args, g, train_nid, fanouts,
-    #                     n_epoch, features, W1, W2, Wa)
+    n_epoch = 1
+    if args.dataset == 'livejournal' or args.dataset == 'ogbn-products':
+        benchmark_w_o_relabel(args, g, train_nid, fanouts,
+                            n_epoch, features, W1, W2, Wa)
+    else:
+        benchmark_w_relabel(args, g, train_nid, fanouts,
+                            n_epoch, features, W1, W2, Wa)
 
 
 if __name__ == '__main__':
