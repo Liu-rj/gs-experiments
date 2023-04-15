@@ -22,8 +22,7 @@ def load_ogbn_products():
     g=g.long()
     feat = g.ndata['feat']
     labels = labels[:, 0]
-    n_classes = len(
-        torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
+    n_classes = len(torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
     g.ndata.clear()
     # print("before:",g)
     g = dgl.remove_self_loop(g)
@@ -37,15 +36,11 @@ def load_100Mpapers():
     splitted_idx = dict()
     splitted_idx['train']=train_id
     coo_matrix = sp.load_npz("/home/ubuntu/data/ogbn-papers100M_adj.npz")
-    # print("before:",g)
     g = dgl.from_scipy(coo_matrix)
- 
-    # g = g.formats("csc")
     g = dgl.remove_self_loop(g)
     g = dgl.add_self_loop(g)
     g=g.long()
-    # print(g)
-    # exit()
+    print("graph loaded")
     return g, None, None, None, splitted_idx
 
 def load_livejournal():
@@ -71,23 +66,8 @@ def load_friendster():
     bin_path = "/home/ubuntu/data/friendster/friendster_adj.bin"
     g_list, _ = dgl.load_graphs(bin_path)
     g = g_list[0]
-    print("graph loaded")
-    # train_nid = torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0]
-    # test_nid = torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0]
-    # val_nid = torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0]
-
-    # features = np.random.rand(g.num_nodes(), 128)
-    # labels = np.random.randint(0, 3, size=g.num_nodes())
-    # feat = torch.tensor(features, dtype=torch.float32)
-    # labels = torch.tensor(labels, dtype=torch.int64)
-    # n_classes = 3
-    # csr_matrix = coo_matrix.tocsr()
-    # sp.save_npz("/home/ubuntu/data/friendster/friendster_adj_csr.npz",csr_matrix)
-    # print("file saved!")
-    # g = dgl.from_scipy(coo_matrix)
-    print(g.formats())
-    # g = g.formats("csc")
     g=g.long()
+    print("graph loaded")
     return g, None,None,None,splitted_idx
 
 class DGLNeighborSampler(BlockSampler):
@@ -110,7 +90,10 @@ class DGLNeighborSampler(BlockSampler):
         # print(self.fanouts)
         for fanout in self.fanouts:
             # subg = g.in_subgraph(relabel_nodes=True)
-            frontier =  g.sample_neighbors(seed_nodes, fanout, replace=False)
+            torch.cuda.nvtx.range_push("dgl slicing and sampling")
+            frontier =  g.sample_neighbors(seed_nodes, fanout, replace=True)
+            torch.cuda.nvtx.range_pop()
+         
             # print("okk")
             # print(type(frontier))
             # print(len(frontier.srcnodes()))
@@ -118,6 +101,7 @@ class DGLNeighborSampler(BlockSampler):
 
             # block = to_block(frontier, seed_nodes)
             seed_nodes = frontier.edges()[0]
+           # print("frontier:",len(seed_nodes))
             blocks.append(frontier.edges()[0])
         input_nodes = seed_nodes
         return input_nodes, output_nodes, blocks
@@ -207,6 +191,7 @@ def load(dataset,args):
     else:
         g= g.to('cuda')
     train_nid = train_nid.to('cuda')
+    train_nid
     # csc_indptr, csc_indices, edge_ids = g.adj_sparse('csc')
     benchmark_w_o_relabel(args, g, train_nid)
 

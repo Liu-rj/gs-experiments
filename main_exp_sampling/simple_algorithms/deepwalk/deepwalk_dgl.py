@@ -206,7 +206,7 @@ if __name__ == '__main__':
                         help="Wether to use UVA to sample graph and load feature")
     parser.add_argument("--dataset", default='products', choices=['reddit', 'products', 'papers100m','friendster','livejournal'],
                         help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=128,
+    parser.add_argument("--batchsize", type=int, default=1024,
                         help="batch size for training")
     parser.add_argument("--num-workers", type=int, default=0,
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")

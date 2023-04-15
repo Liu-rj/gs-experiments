@@ -72,21 +72,6 @@ def load_friendster():
     g_list, _ = dgl.load_graphs(bin_path)
     g = g_list[0]
     print("graph loaded")
-    # train_nid = torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0]
-    # test_nid = torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0]
-    # val_nid = torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0]
-
-    # features = np.random.rand(g.num_nodes(), 128)
-    # labels = np.random.randint(0, 3, size=g.num_nodes())
-    # feat = torch.tensor(features, dtype=torch.float32)
-    # labels = torch.tensor(labels, dtype=torch.int64)
-    # n_classes = 3
-    # csr_matrix = coo_matrix.tocsr()
-    # sp.save_npz("/home/ubuntu/data/friendster/friendster_adj_csr.npz",csr_matrix)
-    # print("file saved!")
-    # g = dgl.from_scipy(coo_matrix)
-    print(g.formats())
-    # g = g.formats("csc")
     g=g.long()
     return g, None,None,None,splitted_idx
 
@@ -95,11 +80,11 @@ def sage_sampler(A, seeds, fanouts):
     output_nodes = seeds
     for fanout in fanouts:
         subg = A._graph._CAPI_fused_columnwise_slicing_sampling(seeds, fanout, False)
-        frontier = subg._CAPI_get_rows()
-        # print("frontier:",len(frontier))
+        frontier = subg._CAPI_get_coo_rows(False)
         blocks.append(frontier)
         seeds = frontier
     input_nodes = seeds
+    # exit()
     return input_nodes, output_nodes, blocks
 
 

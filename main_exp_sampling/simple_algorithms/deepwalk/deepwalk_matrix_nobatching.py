@@ -116,17 +116,23 @@ def benchmark_w_o_relabel(args, matrix, nid):
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
         start = time.time()
+        minibatch_time = []
         for it, seeds in enumerate(tqdm.tqdm(seedloader)):
             seeds = seeds.to('cuda')
+            # torch.cuda.synchronize()
+            start_1 = time.time()
             path = matrix_sampler_deepwalk(matrix, seeds,walk_length)
+            # torch.cuda.synchronize()
+            minibatch_time.append(time.time()-start_1)
+            
 
         torch.cuda.synchronize()
         epoch_time.append(time.time() - start)
         mem_list.append((torch.cuda.max_memory_allocated() -
                         static_memory) / (1024 * 1024 * 1024))
 
-        print("Epoch {:05d} | Epoch Sample Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, epoch_time[-1], mem_list[-1]))
+        print("Epoch {:05d} | Epoch Sample Time {:.4f} s |  Minibatch Sample Time Sum {:.4f} s  | GPU Mem Peak {:.4f} GB"
+              .format(epoch, epoch_time[-1], np.sum(minibatch_time),mem_list[-1]))
 
     # use the first epoch to warm up
     print('Average epoch sampling time:', np.mean(epoch_time[1:])*1000," ms")

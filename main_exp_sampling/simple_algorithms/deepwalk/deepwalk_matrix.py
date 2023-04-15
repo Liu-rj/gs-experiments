@@ -103,7 +103,6 @@ def benchmark_w_o_relabel(args, matrix, nid):
     batch_size = args.big_batch
     seedloader = SeedGenerator(
         nid, batch_size=batch_size, shuffle=True, drop_last=False)
-    fanouts = [int(x.strip()) for x in args.samples.split(',')]
     # train_dataloader = DataLoader(g, train_nid, sampler,batch_size=config['batch_size'], use_prefetch_thread=False,
     # shuffle=False,drop_last=False, num_workers=config['num_workers'],device='cuda',use_uva=config['use_uva'])
     
@@ -111,7 +110,7 @@ def benchmark_w_o_relabel(args, matrix, nid):
     small_batch_size = args.batchsize
 
     #orig_seeds_ptr = torch.arange(num_batches + 1, dtype=torch.int64, device='cuda') * small_batch_size
-    print(args.num_epoch, batch_size, small_batch_size, fanouts)
+    print(args.num_epoch, batch_size, small_batch_size)
     
     epoch_time = []
     mem_list = []
@@ -130,6 +129,7 @@ def benchmark_w_o_relabel(args, matrix, nid):
             if it == len(seedloader) - 1:
                 num_batches = int((seeds.numel() + small_batch_size - 1) / small_batch_size)
             paths = matrix_batch_sampler_deepwalk(matrix, seeds, args.walk_length)
+            # print("paths:",paths.shape,"num_batches:",num_batches)
             split_paths = torch.tensor_split(paths,num_batches)
             # print(len(split_paths))
             # print(split_paths[0].shape)
@@ -216,19 +216,12 @@ if __name__ == '__main__':
                         help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=128,
                         help="batch size for training")
-    parser.add_argument("--num-workers", type=int, default=0,
-                        help="numbers of workers for sampling, must be 0 when gpu or uva is used")
     parser.add_argument("--num-epoch", type=int, default=3,
                         help="numbers of epoch in training")
-    parser.add_argument("--sample-mode", default='ad-hoc', choices=['ad-hoc', 'fine-grained','matrix-fused','matrix-nonfused'],
-                        help="sample mode")
     parser.add_argument("--data-type", default='long', choices=['int', 'long'],
                         help="data type")
     parser.add_argument("--walk-length", type=int, default=80,
                         help="random walk walk length")
-    parser.add_argument("--samples",
-                        default='25,10',
-                        help="sample size for each layer")
     parser.add_argument("--big-batch", type=int, default=1280,
                         help="big batch")
     args = parser.parse_args()
@@ -242,9 +235,4 @@ if __name__ == '__main__':
     elif args.dataset == 'livejournal':
         dataset = load_livejournal()
     print(dataset[0])
-
-
-# bench('DGL random walk', dgl_sampler, g, 4, iters=10, node_idx=nodes)
-# bench('Matrix random walk Non-fused', matrix_sampler_nonfused, matrix,
-#       4, iters=10, node_idx=nodes)
     load(dataset,args)

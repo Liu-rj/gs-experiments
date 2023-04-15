@@ -112,6 +112,7 @@ def benchmark_w_o_relabel(args, graph, nid):
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
         start = time.time()
+        # with train_dataloader.enable_cpu_affinity():
         for it, seeds in enumerate(tqdm.tqdm(train_dataloader)):
             pass
             # traces = sampler.sample(graph, seeds)
@@ -122,7 +123,7 @@ def benchmark_w_o_relabel(args, graph, nid):
                         static_memory) / (1024 * 1024 * 1024))
 
         print("Epoch {:05d} | Epoch Sample Time {:.4f} s | GPU Mem Peak {:.4f} GB"
-              .format(epoch, epoch_time[-1], mem_list[-1]))
+            .format(epoch, epoch_time[-1], mem_list[-1]))
 
     # use the first epoch to warm up
     print('Average epoch sampling time:', np.mean(epoch_time[1:])*1000," ms")

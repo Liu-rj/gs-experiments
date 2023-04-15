@@ -93,37 +93,15 @@ def load_friendster():
 def sage_batchsampler(A: gs.Graph, seeds, seeds_ptr, fanouts):
     ptrts, indts = [], []
     for layer, fanout in enumerate(fanouts):
-        print(seeds.dtype,seeds_ptr.dtype)
-        # torch.cuda.nvtx.range_push('sampling')
         subg = A._graph._CAPI_fused_columnwise_slicing_sampling(seeds, fanout, False)
-        # print("Check slicing:", subg._CAPI_metadata(), '\n')
-        # print("seeds:",seeds,len(seeds))
-        # print("seeds_ptr:",seeds_ptr,len(seeds_ptr))
         indptr, indices, eids = subg._CAPI_get_csc()
-        print("max:",torch.max(indptr),torch.max(indices))
         indices_ptr = indptr[seeds_ptr]
-        #print(indices.dtype,indptr.dtype,seeds_ptr.dtype)
 
-        # print("after batchcsc")
-        # torch.cuda.nvtx.range_pop()
-        # torch.cuda.nvtx.range_push('batchrelabel')
-        # unique_tensor, unique_tensor_ptr, indices, indices_ptr = torch.ops.gs_ops.BatchCSRRelabel(
-        #     seeds, seeds_ptr, indices, indices_ptr)
-        # torch.cuda.nvtx.range_pop()
-
-        # torch.cuda.nvtx.range_push('splitbyoffsets')
-        # unit = torch.ops.gs_ops.SplitByOffset(unique_tensor, unique_tensor_ptr)
-        # print("seeds_ptr:",seeds_ptr.dtype)
-        # print("indptr:",indptr.dtype)
-        # print("indices_ptr:",indices_ptr.dtype)
-        # print("indices:",indices.dtype)
         ptrt = torch.ops.gs_ops.IndptrSplitByOffset(indptr, seeds_ptr)
         indt = torch.ops.gs_ops.SplitByOffset(indices, indices_ptr)
         ptrts.append(ptrt)
         indts.append(indt)
         seeds, seeds_ptr = indices, indices_ptr
-        
-        print(indices.dtype,indices_ptr.dtype,seeds.dtype,seeds_ptr.dtype)
     return ptrts, indts
 
 
@@ -132,7 +110,7 @@ def benchmark_w_o_relabel(args, matrix, nid):
     print('####################################################DGL deepwalk')
     # sampler = DeepWalkSampler(args.walk_length)
     print("train id size:",len(nid))
-    batch_size = 65536
+    batch_size = args.big_batch
     seedloader = SeedGenerator(
         nid, batch_size=batch_size, shuffle=True, drop_last=False)
     fanouts = [int(x.strip()) for x in args.samples.split(',')]
@@ -153,10 +131,12 @@ def benchmark_w_o_relabel(args, matrix, nid):
           static_memory / (1024 * 1024 * 1024), 'GB')
     for epoch in range(args.num_epoch):
         torch.cuda.reset_peak_memory_stats()
+        seeds = torch.arange(512).to('cuda')
         torch.cuda.synchronize()
         start = time.time()
         for it, seeds in enumerate(tqdm.tqdm(seedloader)):
-            seeds = seeds.to('cuda')
+        # for i in range(12816):
+        #     seeds = seeds.to('cuda')
             seeds_ptr = orig_seeds_ptr
             if it == len(seedloader) - 1:
                 num_batches = int((seeds.numel() + small_batch_size - 1) / small_batch_size)
@@ -256,11 +236,11 @@ if __name__ == '__main__':
                         help="sample mode")
     parser.add_argument("--data-type", default='long', choices=['int', 'long'],
                         help="data type")
-    parser.add_argument("--walk-length", type=int, default=100,
-                        help="random walk walk length")
     parser.add_argument("--samples",
                         default='25,10',
                         help="sample size for each layer")
+    parser.add_argument("--big-batch", type=int, default=5120,
+                        help="big batch")
     args = parser.parse_args()
     print('Loading data')
     if args.dataset == 'products':
@@ -270,7 +250,7 @@ if __name__ == '__main__':
     elif args.dataset == 'friendster':
         dataset = load_friendster()
     elif args.dataset == 'livejournal':
-        dataset = load_livejournal()
+        dataset = load_livejournal() 
     print(dataset[0])
 
 
