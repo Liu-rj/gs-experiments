@@ -139,10 +139,10 @@ if __name__ == "__main__":
         "--dataset", default="ogbn-products", help="which dataset to load for training"
     )
     parser.add_argument(
-        "--batchsize", type=int, default=128, help="batch size for training"
+        "--batchsize", type=int, default=1024, help="batch size for training"
     )
     parser.add_argument(
-        "--batching-batchsize", type=int, default=5120, help="batch size for training"
+        "--batching-batchsize", type=int, default=51200, help="batch size for training"
     )
     args = parser.parse_args()
     print(args)
