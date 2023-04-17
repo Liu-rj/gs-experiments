@@ -91,7 +91,7 @@ class DGLNeighborSampler(BlockSampler):
         for fanout in self.fanouts:
             # subg = g.in_subgraph(relabel_nodes=True)
             torch.cuda.nvtx.range_push("dgl slicing and sampling")
-            frontier =  g.sample_neighbors(seed_nodes, fanout, replace=True)
+            frontier =  g.sample_neighbors(seed_nodes, fanout, replace=False)
             torch.cuda.nvtx.range_pop()
          
             # print("okk")

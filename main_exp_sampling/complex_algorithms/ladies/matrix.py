@@ -237,9 +237,9 @@ def train(dataset, args):
     print("Check load successfully:", m._graph._CAPI_metadata(), '\n')
 
     n_epoch = 6
-    # benchmark(args, m, train_nid, fanouts, n_epoch, sample_w_o_relabel)
+    if args.dataset in ('livejournal', 'ogbn-products'):
+        benchmark(args, m, train_nid, fanouts, n_epoch, sample_w_o_relabel)
     benchmark(args, m, train_nid, fanouts, n_epoch, sample_w_relabel)
-    # benchmark(args, m, train_nid, fanouts, n_epoch, sample_mixed_relabel)
 
 
 if __name__ == '__main__':
@@ -252,9 +252,9 @@ if __name__ == '__main__':
                         help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=512,
                         help="batch size for training")
-    parser.add_argument("--batching-batchsize", type=int, default=51200,
+    parser.add_argument("--batching-batchsize", type=int, default=12800,
                         help="batch size for training")
-    parser.add_argument("--samples", default='512,512,512,512,512',
+    parser.add_argument("--samples", default='4000,4000,4000',
                         help="sample size for each layer")
     args = parser.parse_args()
     print(args)
